@@ -39,6 +39,12 @@ class ConfigSingleton(Singleton):
             default="galleries",
             help="Path to the gallery directory",
         )
+        parser.add_argument(
+            "--addr",
+            dest="ADDR",
+            default="0.0.0.0:5000",
+            help="Address to bind the server to, default is '0.0.0.0:5000'",
+        )
 
         args, _ = parser.parse_known_args()
         for key, value in vars(args).items():
@@ -91,6 +97,21 @@ class ConfigSingleton(Singleton):
     def log_function_call(self) -> bool:
         """Get the log function call setting."""
         return self._config.get("LOG_FUNCTION_CALL", False)
+
+    @property
+    def addr(self) -> str:
+        """Get the address to bind the server to."""
+        return self._config.get("ADDR", "0.0.0.0:5000")
+
+    @property
+    def host(self) -> str:
+        """Get the host to bind the server to."""
+        return self.addr.split(":")[0]
+
+    @property
+    def port(self) -> int:
+        """Get the port to bind the server to."""
+        return int(self.addr.split(":")[1]) if ":" in self.addr else 5000
 
 
 Config = ConfigSingleton()
