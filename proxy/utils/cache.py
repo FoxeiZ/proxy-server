@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+from collections import OrderedDict
+from typing import TYPE_CHECKING, TypeVar
+
+from ..singleton import Singleton
+
+if TYPE_CHECKING:
+    from .._types.nhentai import NhentaiGallery  # noqa: F401
+
+V = TypeVar("V")
+K = TypeVar("K")
+
+__all__ = ("GalleryInfoCache", "ResourceCache", "LRUCache")
+
+
+class LRUCache(OrderedDict[K, V]):
+    def __init__(self, max_size):
+        super().__init__()
+        self.max_size = max_size
+
+    def get(self, key: K) -> V | None:  # type: ignore
+        if key not in self:
+            return None
+        else:
+            self.move_to_end(key)
+            return self[key]
+
+    def put(self, key: K, value: V) -> None:
+        self[key] = value
+        self.move_to_end(key)
+        if len(self) > self.max_size:
+            self.popitem(last=False)
+
+    def remove(self, key: K) -> None:
+        if key in self:
+            del self[key]
+
+
+class GalleryInfoCache(LRUCache[int, "NhentaiGallery"], Singleton):
+    """Cache for BeautifulSoup objects to avoid re-parsing the same HTML content."""
+
+    def __init__(self, max_size: int = 4):
+        super().__init__(max_size=max_size)
+
+
+class ResourceCache(LRUCache[str, tuple[dict, bytes]], Singleton):
+    """Cache for resources to avoid re-fetching the same content."""
+
+    def __init__(self, max_size: int = 100):
+        super().__init__(max_size=max_size)

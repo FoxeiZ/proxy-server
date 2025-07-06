@@ -1,0 +1,7 @@
+Flask
+quart
+beautifulsoup4
+cloudscraper
+xmltodict
+requests
+pytest
