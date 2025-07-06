@@ -152,7 +152,7 @@ def remove_special_characters(title: str) -> str:
 
 
 def parse_manga_title(title: str) -> ParsedMangaTitle:
-    pattern = r"^(.*?)(?:\s+[-+=]?(\d+)[-+=]?)?(?:\s*~([^~]+)~)?(?:\s*\|\s*(.+?)(?:\s+[-+=]?(\d+)[-+=]?)?)?$"
+    pattern = r"^(.*?)(?:\s*[-+=]?(\d+)[-+=]?)?(?:\s*~([^~]+)~)?(?:\s*\|\s*(.+?)(?:\s*[-+=]?(\d+)[-+=]?)?)?$"
 
     match = re.match(pattern, title.strip())
     if match:
