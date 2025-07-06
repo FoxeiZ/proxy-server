@@ -189,26 +189,42 @@ def clean_and_split(content: str) -> list[str]:
     return [t.strip() for t in content.split("|") if t.strip()]
 
 
-def make_gallery_path(
+def _make_gallery_path(
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
 ) -> Path:
     """Create the gallery path based on the gallery information."""
     base_path = Path(Config.gallery_path) / gallery_language
     main_title = gallery_title["main_title"]
-    for path_variant in (
-        remove_special_characters(main_title).lower(),
-        main_title.lower(),
-    ):
+
+    clean_title = remove_special_characters(main_title).lower()
+    if gallery_path := GalleryScanner.contains(gallery_language, clean_title):
+        return gallery_path
+
+    if gallery_path := GalleryScanner.contains(gallery_language, main_title.lower()):
+        return gallery_path
+
+    for path_variant in (clean_title, main_title.lower()):
         matched = GalleryScanner.fuzzy_contains(
             gallery_language, path_variant, match_threshold=0.58
         )
         if matched:
-            return matched[0][1]  # TODO: Handle multiple matches, if necessary
-        else:
-            if gallery_path := GalleryScanner.contains(gallery_language, path_variant):
-                return gallery_path
-    return base_path / remove_special_characters(gallery_title["main_title"]).lower()
+            return matched[0][1]
+
+    return base_path / clean_title
+
+
+def make_gallery_path(
+    gallery_title: ParsedMangaTitle,
+    gallery_language: str,
+    *,
+    cache: bool = True,
+) -> Path:
+    """Create the gallery path based on the gallery information."""
+    ret = _make_gallery_path(gallery_title, gallery_language)
+    if cache:
+        GalleryScanner.add_scanned_dir(gallery_language, ret.name)
+    return ret
 
 
 def _check_file_status(

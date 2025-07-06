@@ -83,7 +83,7 @@ class DownloadPool(Singleton):
         progress.status = DownloadStatus.DOWNLOADING
 
         gallery_path = make_gallery_path(
-            info["title"], gallery_language=gallery_language
+            info["title"], gallery_language=gallery_language, cache=True
         ) / str(gallery_id)
         if not gallery_path.exists():
             gallery_path.mkdir(parents=True, exist_ok=True)
@@ -101,11 +101,6 @@ class DownloadPool(Singleton):
                 self._on_download_image_complete(gallery_id)
             except Exception as e:
                 self._on_download_image_error(gallery_id, e)
-
-        GalleryScanner.add_scanned_dir(
-            gallery_language,
-            gallery_path.parent.name,
-        )
 
     def _on_download_image_error(self, gallery_id: int, error: Exception):
         """Handle errors during image download."""
@@ -176,7 +171,7 @@ class DownloadPool(Singleton):
 
     def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
         gallery_path = make_gallery_path(
-            info["title"], gallery_language=info["language"]
+            info["title"], gallery_language=info["language"], cache=True
         )
         if not gallery_path.exists():
             logger.error("Gallery path does not exist: %s", gallery_path)
