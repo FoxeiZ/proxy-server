@@ -107,8 +107,9 @@ class XMLWriter:
         self.add_element("Writer", ", ".join(gallery_info["writers"]))
         self.add_element("Translator", gallery_info["scanlator"])
         self.add_element("Tags", ", ".join(gallery_info["tags"]))
-        self.add_element("Genre", ", ".join(gallery_info["parodies"]))
-        self.add_element("SeriesGroup", ", ".join(gallery_info["characters"]))
+        self.add_element("SeriesGroup", ", ".join(gallery_info["parodies"]))
+        self.add_element("Genre", ", ".join(gallery_info["characters"]))
+        self.add_element("Characters", ", ".join(gallery_info["characters"]))
         self.add_element("Web", f"https://nhentai.net/g/{gallery_info['id']}")
         self.add_element("Translated", "Yes" if gallery_info["translated"] else "No")
         self.add_element(
