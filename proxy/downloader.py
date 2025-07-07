@@ -1,4 +1,3 @@
-# TODO: Add support for multi-volume galleries
 from __future__ import annotations
 
 import zipfile
@@ -8,8 +7,6 @@ from pathlib import Path
 from threading import Lock
 from time import sleep
 from typing import TYPE_CHECKING, Optional
-
-import xmltodict
 
 from .enums import DownloadStatus, FileStatus
 from .singleton import Singleton
@@ -21,7 +18,7 @@ from .utils import (
     get_logger,
     make_gallery_path,
 )
-from .utils.manga import GalleryScanner  # noqa: F401
+from .utils.xml import XMLIOWriter
 
 if TYPE_CHECKING:
     from ._types.nhentai import NhentaiGallery
@@ -198,40 +195,10 @@ class DownloadPool(Singleton):
                     info["characters"].insert(0, "#field-characters")
                     info["characters"].append("#end-field-characters")
 
-                f.write(
-                    xmltodict.unparse(
-                        {
-                            "ComicInfo": {
-                                "@xmlns:xsd": "http://www.w3.org/2001/XMLSchema",
-                                "@xmlns:xsi": "http://www.w3.org/2001/XMLSchema-instance",
-                                "Title": info["title"]["chapter_title"],
-                                "Series": (
-                                    info["title"]["english_title"]
-                                    or info["title"]["main_title"]
-                                ),
-                                "Number": info["title"]["chapter_number"],
-                                "LanguageISO": (
-                                    "ja"
-                                    if info["language"] == "japanese"
-                                    else "zh"
-                                    if info["language"] == "chinese"
-                                    else "en"
-                                ),
-                                "PageCount": total_images,
-                                "Penciller": ", ".join(info["artists"]),
-                                "Writer": ", ".join(info["writers"]),
-                                "Translator": info["scanlator"],
-                                "Tags": ", ".join(info["tags"]),
-                                "Genre": ", ".join(
-                                    info["characters"]
-                                ),  # since characters are not available in ComicInfo.xml, use them as genre
-                                "SeriesGroup": ", ".join(info["parodies"]),
-                                "Web": f"https://nhentai.net/g/{info['id']}",
-                            }
-                        },
-                        pretty=True,
-                    ).encode("utf-8")
-                )
+                xml_writer = XMLIOWriter()
+                xml_writer.from_gallery_info(info)
+                xml_writer.write_to_file(f)
+
             if remove_images:
                 logger.info("Removing images after conversion to CBZ.")
                 for img_file in img_dir.iterdir():

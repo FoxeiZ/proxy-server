@@ -85,6 +85,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
     characters = []
     language = "english"  # default
     category = "manga"  # default
+    translated = False
 
     for tag in original_tags:
         if tag["type"] == "tag":
@@ -95,7 +96,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
             parodies.extend(clean_and_split(tag["name"]))
         elif tag["type"] == "language":
             if tag["name"] == "translated":
-                continue
+                translated = True
             language = tag["name"]
         elif tag["type"] == "category":
             category = tag["name"]
@@ -123,6 +124,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         "num_pages": gallery_data["num_pages"],
         "num_favorites": gallery_data["num_favorites"],
         "page_count": gallery_data["num_pages"],
+        "translated": translated,
     }
 
     return processed_gallery

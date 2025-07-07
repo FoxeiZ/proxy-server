@@ -78,3 +78,4 @@ class NhentaiGallery(_NhentaiData):
     language: str
     category: str
     page_count: int
+    translated: bool
