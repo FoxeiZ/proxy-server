@@ -97,6 +97,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         elif tag["type"] == "language":
             if tag["name"] == "translated":
                 translated = True
+                continue
             language = tag["name"]
         elif tag["type"] == "category":
             category = tag["name"]
