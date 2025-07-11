@@ -40,7 +40,7 @@ class LRUCache(OrderedDict[K, V]):
 class GalleryInfoCache(LRUCache[int, "NhentaiGallery"], Singleton):
     """Cache for BeautifulSoup objects to avoid re-parsing the same HTML content."""
 
-    def __init__(self, max_size: int = 4):
+    def __init__(self, max_size: int = 10):
         super().__init__(max_size=max_size)
 
 
