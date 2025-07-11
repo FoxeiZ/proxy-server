@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import zipfile
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -11,9 +12,12 @@ from ..config import Config
 from ..enums import FileStatus
 
 if TYPE_CHECKING:
-    from typing import Iterator
+    from typing import Iterator, Literal
 
     from .._types.nhentai import NhentaiGallery, ParsedMangaTitle
+
+    _Language = Literal["english", "japanese", "chinese"] | str
+    _TitleDir = str
 
 
 __all__ = (
@@ -36,7 +40,88 @@ IMAGE_TYPE_MAPPING = {
     "w": "webp",
     "g": "gif",
 }
-SUPPORTED_IMAGE_TYPES = set(IMAGE_TYPE_MAPPING.values())
+SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
+
+
+class _GalleryCbzFile:
+    def __init__(self, path: Path | str):
+        self.path: Path = Path(path)
+        self._id: str = self.path.stem
+
+        self._thumbnail_dir = self.path.parent / ".thumbnails"
+        self._thumbnail: Path | None = None
+
+    @property
+    def thumbnail_dir(self) -> Path:
+        """Get the directory of the thumbnail image."""
+        if not self._thumbnail_dir.exists():
+            self._thumbnail_dir.mkdir(parents=True, exist_ok=True)
+        return self._thumbnail_dir
+
+    @property
+    def thumbnail(self) -> Path:
+        """Get the thumbnail image path."""
+        if self._thumbnail is None:
+            thumb = next(self.thumbnail_dir.glob(f"{self._id}.*"), None)
+            if thumb is None:
+                raise FileNotFoundError(f"Thumbnail not found for {self._id}")
+            self._thumbnail = thumb
+        return self._thumbnail
+
+    def _extract_thumbnail(self, zipfile: zipfile.ZipFile) -> None:
+        names = zipfile.namelist()
+        names.sort()
+        names.remove("ComicInfo.xml")
+        if not names:
+            raise FileNotFoundError(f"No images found in {self.path}")
+        p = Path(names[0])
+        if p.suffix[1:].lower() not in SUPPORTED_IMAGE_TYPES:
+            raise ValueError(
+                f"Unsupported image type in {self.path}: {p.name}. "
+                f"Supported types are: {', '.join(SUPPORTED_IMAGE_TYPES)}."
+            )
+        zipfile.extract(self._id + p.suffix, self.thumbnail_dir)
+
+    def _open(self):
+        """Open the CBZ file as a zip archive."""
+        # Try to access these properties,
+        # if FileNotFoundError is raised,
+        # we properly need to open the file to get data.
+        try:
+            self.thumbnail
+        except FileNotFoundError:
+            with zipfile.ZipFile(self.path, "r") as zip_file:
+                self._extract_thumbnail(zip_file)
+
+    def __eq__(self, value: object) -> bool:
+        if not isinstance(value, _GalleryCbzFile):
+            return False
+        return self.path == value.path
+
+    def __hash__(self) -> int:
+        return hash(self.path)
+
+    def __ne__(self, value: object) -> bool:
+        if not isinstance(value, _GalleryCbzFile):
+            return True
+        return self.path != value.path
+
+
+class _GalleryDir:
+    def __init__(self, path: Path | str):
+        self.path: Path = Path(path)
+        self._title: str = self.path.name
+        self._cbz_files: set[_GalleryCbzFile] = set()
+
+    def scan(self):
+        if not self.path.is_dir():
+            return self
+
+        for entry in os.scandir(self.path):
+            if entry.is_file() and entry.name.endswith(".cbz"):
+                self._cbz_files.add(_GalleryCbzFile(entry.path))
+
+        return self
 
 
 class _GalleryScanner:
@@ -50,7 +135,7 @@ class _GalleryScanner:
         """Initialize the directory scanner."""
         self.last_scanned: datetime | None = None
         self.path: Path = init_path if isinstance(init_path, Path) else Path(init_path)
-        self._scanned_dirs: dict[str, set[str]] = {}
+        self._scanned_dirs: dict[_Language, dict[_TitleDir, _GalleryDir]] = {}
 
     @property
     def should_scan(self) -> bool:
@@ -60,22 +145,31 @@ class _GalleryScanner:
         return (datetime.now() - self.last_scanned).total_seconds() > 3600
 
     @property
-    def scanned_dirs(self) -> dict[str, set[str]]:
+    def scanned_dirs(self) -> dict[_Language, dict[_TitleDir, _GalleryDir]]:
         """Get the scanned directories."""
         if self.should_scan:
             self.scan(self.path)
         return self._scanned_dirs
 
-    def add_scanned_dir(self, lang: str, dir_name: str) -> None:
+    def add_scanned_dir(self, lang: _Language, dir_name: _TitleDir) -> None:
         """Add a scanned directory to the internal storage."""
-        self._scanned_dirs.setdefault(lang, set()).add(dir_name)
+        if lang not in self._scanned_dirs:
+            self._scanned_dirs[lang] = {}
 
-    def remove_scanned_dir(self, lang: str, dir_name: str) -> None:
+        if dir_name in self._scanned_dirs[lang]:
+            return
+
+        dir_path = Path(self.path) / lang / dir_name
+        if not dir_path.is_dir():
+            return
+
+        self._scanned_dirs[lang][dir_name] = _GalleryDir(dir_path).scan()
+
+    def remove_scanned_dir(self, lang: _Language, dir_name: _TitleDir) -> None:
         """Remove a scanned directory from the internal storage."""
-        if lang in self._scanned_dirs:
-            self._scanned_dirs[lang].discard(dir_name)
-            if not self._scanned_dirs[lang]:
-                del self._scanned_dirs[lang]
+        if lang not in self._scanned_dirs or dir_name not in self._scanned_dirs[lang]:
+            return
+        del self._scanned_dirs[lang][dir_name]
 
     def clear_scanned_dirs(self) -> None:
         """Clear all scanned directories."""
@@ -87,31 +181,32 @@ class _GalleryScanner:
         if not path.is_dir():
             return
 
-        for entry in os.scandir(path):
-            if not entry.is_dir():
+        for lang_entry in os.scandir(path):
+            if not lang_entry.is_dir():
                 continue
 
-            for sub_entry in os.scandir(entry.path):
+            for sub_entry in os.scandir(lang_entry.path):
                 if sub_entry.is_dir():
-                    self.add_scanned_dir(entry.name, sub_entry.name)
+                    self.add_scanned_dir(lang_entry.name, sub_entry.name)
 
         self.last_scanned = datetime.now()
 
-    def contains(self, lang: str, dir_name: str) -> Path | None:
+    def contains(self, lang: _Language, dir_name: _TitleDir) -> Path | None:
         """Check if the scanned directories contain a specific file."""
         if lang not in self.scanned_dirs:
             return None
 
-        for scanned_dir in self.scanned_dirs[lang]:
-            if scanned_dir.lower() == dir_name.lower():
-                return Path(self.path) / lang / scanned_dir
+        for name_variant in (dir_name, dir_name.lower()):
+            if name_variant in self.scanned_dirs[lang]:
+                return self.scanned_dirs[lang][name_variant].path
+        return None
 
     def fuzzy_contains(
-        self, lang: str, dir_name: str, match_threshold: float = 0.55
+        self, lang: _Language, dir_name: _TitleDir, match_threshold: float = 0.55
     ) -> list[tuple[float, Path]]:
         """Check if the scanned directories contain a specific file (fuzzy match)."""
         matched: list[tuple[float, Path]] = []
-        for scanned_dir in self.scanned_dirs.get(lang, set()):
+        for scanned_dir in self.scanned_dirs.get(lang, dict()).keys():
             sm = SequenceMatcher(
                 lambda x: x in ("-", "_"), scanned_dir.lower(), dir_name.lower()
             )
@@ -120,16 +215,15 @@ class _GalleryScanner:
                 matched.append((ratio, Path(self.path) / lang / scanned_dir))
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
-    def __iter__(self) -> Iterator[tuple[str, str]]:
+    def __iter__(self) -> Iterator[tuple[_Language, _GalleryDir]]:
         """Iterate over the scanned directories."""
-        if self.should_scan:
-            self.scan(self.path)
         for lang, files in self.scanned_dirs.items():
-            for file_name in files:
-                yield (lang, file_name)
+            for file_name, gallery_dir in files.items():
+                yield (lang, gallery_dir)
 
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
+GalleryScanner.scanned_dirs
 
 
 def clean_title(manga_title):
@@ -196,6 +290,12 @@ def _make_gallery_path(
     """Create the gallery path based on the gallery information."""
     base_path = Path(Config.gallery_path) / gallery_language
     main_title = gallery_title["main_title"]
+
+    if gallery_language not in ("english", "japanese", "chinese"):
+        raise ValueError(
+            f"Unsupported gallery language: {gallery_language}. "
+            "Supported languages are: english, japanese, chinese."
+        )
 
     clean_title = remove_special_characters(main_title).lower()
     if gallery_path := GalleryScanner.contains(gallery_language, clean_title):
