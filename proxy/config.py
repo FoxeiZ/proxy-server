@@ -84,6 +84,11 @@ class ConfigSingleton(Singleton):
         return self._config.get("GALLERY_PATH", "galleries")
 
     @property
+    def cache_path(self) -> str:
+        """Get the cache path."""
+        return os.path.join(self.gallery_path, ".cache")
+
+    @property
     def debug(self) -> bool:
         """Get the debug mode."""
         return self.log_level == "DEBUG"

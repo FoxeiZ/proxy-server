@@ -16,8 +16,8 @@ from ..utils import (
     check_file_status,
     check_file_status_gallery,
     clean_and_parse_title,
-    clean_and_split,
     get_logger,
+    split_and_clean,
 )
 from .base import ModifyRule
 
@@ -91,9 +91,9 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         if tag["type"] == "tag":
             tags.append(tag["name"])
         elif tag["type"] == "artist":
-            artists.extend(clean_and_split(tag["name"]))
+            artists.extend(split_and_clean(tag["name"]))
         elif tag["type"] == "parody":
-            parodies.extend(clean_and_split(tag["name"]))
+            parodies.extend(split_and_clean(tag["name"]))
         elif tag["type"] == "language":
             if tag["name"] == "translated":
                 translated = True
@@ -102,9 +102,9 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         elif tag["type"] == "category":
             category = tag["name"]
         elif tag["type"] == "group":
-            writers.extend(clean_and_split(tag["name"]))
+            writers.extend(split_and_clean(tag["name"]))
         elif tag["type"] == "character":
-            characters.extend(clean_and_split(tag["name"]))
+            characters.extend(split_and_clean(tag["name"]))
         else:
             logger.warning(f"Unknown tag type: {tag['type']} with name: {tag['name']}")
 

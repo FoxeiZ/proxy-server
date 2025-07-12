@@ -94,8 +94,13 @@ def modify_html_content(
             tags_attr.append(("img", "src"))
             tags_attr.append(("img", "data-src"))
 
-        for tag_attr in tags_attr:
-            tag_name, attr_name = tag_attr
+        for tag_name, attr_name in (("img", "src"), ("img", "data-src")):
+            for tag in soup.find_all(tag_name, {attr_name: True}):
+                if not isinstance(tag, Tag):
+                    continue
+                tag[attr_name] = ""
+
+        for tag_name, attr_name in tags_attr:
             for tag in soup.find_all(tag_name, {attr_name: True}):
                 if not isinstance(tag, Tag):
                     continue

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import zipfile
@@ -10,6 +11,7 @@ from typing import TYPE_CHECKING, overload
 
 from ..config import Config
 from ..enums import FileStatus
+from .xml import ComicInfoDict, ComicInfoXML
 
 if TYPE_CHECKING:
     from typing import Iterator, Literal
@@ -27,7 +29,7 @@ __all__ = (
     "check_file_status_gallery",
     "parse_manga_title",
     "make_gallery_path",
-    "clean_and_split",
+    "split_and_clean",
     "remove_special_characters",
     "IMAGE_TYPE_MAPPING",
     "SUPPORTED_IMAGE_TYPES",
@@ -44,12 +46,30 @@ SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
 
 
 class _GalleryCbzFile:
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, force_extract: bool = False):
         self.path: Path = Path(path)
         self._id: str = self.path.stem
 
-        self._thumbnail_dir = self.path.parent / ".thumbnails"
+        self._thumbnail_dir = Path(Config.cache_path) / "thumbnails"
         self._thumbnail: Path | None = None
+        self._info_file: Path = self.path.with_suffix(".info.json")
+        self._info: ComicInfoDict | None = None
+
+        if not self.path.exists():
+            raise FileNotFoundError(f"File {self.path} does not exist.")
+        if force_extract:
+            self.__extract()
+
+    @property
+    def info(self) -> ComicInfoDict | None:
+        """Get the info dictionary."""
+        if self._info is None:
+            if self._info_file.exists():
+                with open(self._info_file, "r", encoding="utf-8") as f:
+                    self._info = json.load(f)
+            else:
+                self._info = {}
+        return self._info
 
     @property
     def thumbnail_dir(self) -> Path:
@@ -64,34 +84,96 @@ class _GalleryCbzFile:
         if self._thumbnail is None:
             thumb = next(self.thumbnail_dir.glob(f"{self._id}.*"), None)
             if thumb is None:
-                raise FileNotFoundError(f"Thumbnail not found for {self._id}")
+                thumb = self._extract_thumbnail()
             self._thumbnail = thumb
         return self._thumbnail
 
-    def _extract_thumbnail(self, zipfile: zipfile.ZipFile) -> None:
-        names = zipfile.namelist()
-        names.sort()
-        names.remove("ComicInfo.xml")
-        if not names:
-            raise FileNotFoundError(f"No images found in {self.path}")
-        p = Path(names[0])
-        if p.suffix[1:].lower() not in SUPPORTED_IMAGE_TYPES:
-            raise ValueError(
-                f"Unsupported image type in {self.path}: {p.name}. "
-                f"Supported types are: {', '.join(SUPPORTED_IMAGE_TYPES)}."
-            )
-        zipfile.extract(self._id + p.suffix, self.thumbnail_dir)
+    def __extract(self, only_if_missing: bool = True) -> None:
+        """Extract necessary files from the archive. Only called if all the files are missing."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"File {self.path} does not exist.")
 
-    def _open(self):
-        """Open the CBZ file as a zip archive."""
-        # Try to access these properties,
-        # if FileNotFoundError is raised,
-        # we properly need to open the file to get data.
-        try:
-            self.thumbnail
-        except FileNotFoundError:
-            with zipfile.ZipFile(self.path, "r") as zip_file:
-                self._extract_thumbnail(zip_file)
+        with zipfile.ZipFile(self.path, "r") as zip_file:
+            if only_if_missing and self._info_file.exists() and self.thumbnail.exists():
+                return
+
+            if not self._info_file.exists():
+                self._extract_info(zip_file=zip_file)
+
+            if not self.thumbnail.exists():
+                self._extract_thumbnail(zip_file=zip_file)
+
+    def _extract_thumbnail(self, *, zip_file: zipfile.ZipFile | None = None) -> Path:
+        """Extract the first image from the CBZ file as a thumbnail."""
+        if self._thumbnail:
+            return self._thumbnail
+        thumbnail_path = next(self.thumbnail_dir.glob(f"{self._id}.*"), None)
+        if thumbnail_path:
+            return thumbnail_path
+
+        zip_close = False
+        if not zip_file:
+            if not self.path.exists():
+                raise FileNotFoundError(f"File {self.path} does not exist.")
+            zip_file = zipfile.ZipFile(self.path, "r")
+            zip_close = True
+
+        namelist = zip_file.namelist()
+        names = sorted(
+            name for name in namelist if name.endswith(SUPPORTED_IMAGE_TYPES)
+        )
+        if not names:
+            raise FileNotFoundError(
+                f"No supported image files found in {self.path}. Supported types: {SUPPORTED_IMAGE_TYPES}"
+            )
+
+        p = Path(names[0])
+        thumbnail_path = self.thumbnail_dir / f"{self._id}{p.suffix}"
+        with (
+            zip_file.open(names[0]) as source,
+            open(thumbnail_path, "wb") as target,
+        ):
+            target.write(source.read())
+
+        if zip_close:
+            zip_file.close()
+        return thumbnail_path
+
+    def _extract_info(
+        self, *, zip_file: zipfile.ZipFile | None = None
+    ) -> ComicInfoDict:
+        if self._info:
+            return self._info
+
+        if self._info_file.exists():
+            with open(self._info_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+        close_zip = False
+        if not zip_file:
+            if not self.path.exists():
+                raise FileNotFoundError(f"File {self.path} does not exist.")
+            zip_file = zipfile.ZipFile(self.path, "r")
+            close_zip = True
+
+        info: ComicInfoDict = {}
+        if "ComicInfo.xml" in zip_file.namelist():
+            with zip_file.open("ComicInfo.xml") as source:
+                xml_content = source.read().decode("utf-8")
+            comic_info = ComicInfoXML.from_string(xml_content)
+            info = comic_info.to_dict()
+
+        if close_zip:
+            zip_file.close()
+
+        if info:
+            with open(self._info_file, "w", encoding="utf-8") as f:
+                json.dump(info, f, indent=4)
+            return info
+
+        raise FileNotFoundError(
+            f"No ComicInfo.xml found in {self.path}. Please ensure the file is a valid CBZ archive."
+        )
 
     def __eq__(self, value: object) -> bool:
         if not isinstance(value, _GalleryCbzFile):
@@ -111,7 +193,21 @@ class _GalleryDir:
     def __init__(self, path: Path | str):
         self.path: Path = Path(path)
         self._title: str = self.path.name
-        self._cbz_files: set[_GalleryCbzFile] = set()
+        self._cbz_files: dict[str, _GalleryCbzFile] = {}
+        self._is_scanned: bool = False
+
+    @property
+    def count(self) -> int:
+        if not self._is_scanned:
+            self.scan()
+        return len(self._cbz_files)
+
+    @property
+    def files(self) -> list[_GalleryCbzFile]:
+        """Get the list of CBZ files in the directory."""
+        if not self._is_scanned:
+            self.scan()
+        return list(self._cbz_files.values())
 
     def scan(self):
         if not self.path.is_dir():
@@ -119,8 +215,9 @@ class _GalleryDir:
 
         for entry in os.scandir(self.path):
             if entry.is_file() and entry.name.endswith(".cbz"):
-                self._cbz_files.add(_GalleryCbzFile(entry.path))
+                self._cbz_files[entry.name] = _GalleryCbzFile(entry.path)
 
+        self._is_scanned = True
         return self
 
 
@@ -186,8 +283,17 @@ class _GalleryScanner:
                 continue
 
             for sub_entry in os.scandir(lang_entry.path):
-                if sub_entry.is_dir():
-                    self.add_scanned_dir(lang_entry.name, sub_entry.name)
+                if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+                    continue
+                if sub_entry in self._scanned_dirs.get(lang_entry.name, {}):
+                    if (
+                        self.last_scanned  # yes scanned
+                        and datetime.fromtimestamp(sub_entry.stat().st_mtime)
+                        > self.last_scanned  # and modification time is greater than last scanned time
+                    ):
+                        continue
+
+                self.add_scanned_dir(lang_entry.name, sub_entry.name)
 
         self.last_scanned = datetime.now()
 
@@ -223,7 +329,6 @@ class _GalleryScanner:
 
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
-GalleryScanner.scanned_dirs
 
 
 def clean_title(manga_title):
@@ -279,7 +384,7 @@ def clean_and_parse_title(title: str) -> ParsedMangaTitle:
     return parse_manga_title(cleaned_title)
 
 
-def clean_and_split(content: str) -> list[str]:
+def split_and_clean(content: str) -> list[str]:
     return [t.strip() for t in content.split("|") if t.strip()]
 
 
