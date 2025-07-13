@@ -58,17 +58,13 @@ class _GalleryCbzFile:
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
         if force_extract:
-            self.__extract()
+            self._extract()
 
     @property
-    def info(self) -> ComicInfoDict | None:
+    def info(self) -> ComicInfoDict:
         """Get the info dictionary."""
         if self._info is None:
-            if self._info_file.exists():
-                with open(self._info_file, "r", encoding="utf-8") as f:
-                    self._info = json.load(f)
-            else:
-                self._info = {}
+            self._info = self._extract_info()
         return self._info
 
     @property
@@ -88,7 +84,7 @@ class _GalleryCbzFile:
             self._thumbnail = thumb
         return self._thumbnail
 
-    def __extract(self, only_if_missing: bool = True) -> None:
+    def _extract(self, only_if_missing: bool = True) -> None:
         """Extract necessary files from the archive. Only called if all the files are missing."""
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
