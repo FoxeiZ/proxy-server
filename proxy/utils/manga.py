@@ -84,15 +84,19 @@ class _GalleryCbzFile:
             self._thumbnail = thumb
         return self._thumbnail
 
-    def _extract(self, only_if_missing: bool = True) -> None:
+    def _extract(self, only_if_missing: bool = True, force: bool = False) -> None:
         """Extract necessary files from the archive. Only called if all the files are missing."""
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
 
-        with zipfile.ZipFile(self.path, "r") as zip_file:
-            if only_if_missing and self._info_file.exists() and self.thumbnail.exists():
-                return
+        if (
+            (only_if_missing and not force)
+            and self._info_file.exists()
+            and self.thumbnail.exists()
+        ):
+            return
 
+        with zipfile.ZipFile(self.path, "r") as zip_file:
             if not self._info_file.exists():
                 self._extract_info(zip_file=zip_file)
 
@@ -222,6 +226,7 @@ class _GalleryScanner:
         "last_scanned",
         "path",
         "_scanned_dirs",
+        "_total_book_count",
     )
 
     def __init__(self, init_path: Path | str):
@@ -229,6 +234,7 @@ class _GalleryScanner:
         self.last_scanned: datetime | None = None
         self.path: Path = init_path if isinstance(init_path, Path) else Path(init_path)
         self._scanned_dirs: dict[_Language, dict[_TitleDir, _GalleryDir]] = {}
+        self._total_book_count = 0
 
     @property
     def should_scan(self) -> bool:
@@ -244,7 +250,9 @@ class _GalleryScanner:
             self.scan(self.path)
         return self._scanned_dirs
 
-    def add_scanned_dir(self, lang: _Language, dir_name: _TitleDir) -> None:
+    def add_scanned_dir(
+        self, lang: _Language, dir_name: _TitleDir, *, sort: bool = True
+    ) -> None:
         """Add a scanned directory to the internal storage."""
         if lang not in self._scanned_dirs:
             self._scanned_dirs[lang] = {}
@@ -256,40 +264,65 @@ class _GalleryScanner:
         if not dir_path.is_dir():
             return
 
-        self._scanned_dirs[lang][dir_name] = _GalleryDir(dir_path).scan()
+        gallery_dir = _GalleryDir(dir_path).scan()
+        if not gallery_dir.count:
+            return
+        self._scanned_dirs[lang][dir_name] = gallery_dir
+        self._total_book_count += gallery_dir.count
+        if sort:
+            self._scanned_dirs[lang] = dict(
+                sorted(self._scanned_dirs[lang].items(), key=lambda item: item[0])
+            )
 
     def remove_scanned_dir(self, lang: _Language, dir_name: _TitleDir) -> None:
         """Remove a scanned directory from the internal storage."""
         if lang not in self._scanned_dirs or dir_name not in self._scanned_dirs[lang]:
             return
+        self._total_book_count -= self._scanned_dirs[lang][dir_name].count
         del self._scanned_dirs[lang][dir_name]
 
     def clear_scanned_dirs(self) -> None:
         """Clear all scanned directories."""
         self._scanned_dirs.clear()
         self.last_scanned = None
+        self._total_book_count = 0
 
     def scan(self, path: Path) -> None:
         """Scan the directory and store its path."""
         if not path.is_dir():
             return
 
-        for lang_entry in os.scandir(path):
-            if not lang_entry.is_dir():
-                continue
-
-            for sub_entry in os.scandir(lang_entry.path):
-                if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+        try:
+            for lang_entry in os.scandir(path):
+                if not lang_entry.is_dir():
                     continue
-                if sub_entry in self._scanned_dirs.get(lang_entry.name, {}):
-                    if (
-                        self.last_scanned  # yes scanned
-                        and datetime.fromtimestamp(sub_entry.stat().st_mtime)
-                        > self.last_scanned  # and modification time is greater than last scanned time
-                    ):
-                        continue
 
-                self.add_scanned_dir(lang_entry.name, sub_entry.name)
+                try:
+                    for sub_entry in os.scandir(lang_entry.path):
+                        if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+                            continue
+                        if sub_entry.name in self._scanned_dirs.get(
+                            lang_entry.name, {}
+                        ):
+                            if (
+                                self.last_scanned  # yes scanned
+                                and datetime.fromtimestamp(sub_entry.stat().st_mtime)
+                                <= self.last_scanned  # and modification time is NOT greater than last scanned time
+                            ):
+                                continue
+
+                        self.add_scanned_dir(
+                            lang_entry.name, sub_entry.name, sort=False
+                        )
+                except (OSError, PermissionError):
+                    continue  # skip dir if no access
+        except (OSError, PermissionError):
+            return  # return now
+
+        for lang_entry in self._scanned_dirs:
+            self._scanned_dirs[lang_entry] = dict(
+                sorted(self._scanned_dirs[lang_entry].items(), key=lambda item: item[0])
+            )
 
         self.last_scanned = datetime.now()
 
@@ -317,11 +350,31 @@ class _GalleryScanner:
                 matched.append((ratio, Path(self.path) / lang / scanned_dir))
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
-    def __iter__(self) -> Iterator[tuple[_Language, _GalleryDir]]:
-        """Iterate over the scanned directories."""
-        for lang, files in self.scanned_dirs.items():
-            for file_name, gallery_dir in files.items():
-                yield (lang, gallery_dir)
+    def iter_gallery_generator(
+        self, lang: _Language, limit: int = 15, page: int = 1
+    ) -> Iterator[_GalleryCbzFile]:
+        """Generator that yields gallery files without creating intermediate lists."""
+        start_idx = (page - 1) * limit
+        current_idx = 0
+        yielded = 0
+
+        for gallery_dir in self.scanned_dirs.get(lang, {}).values():
+            if gallery_dir.count == 0:
+                continue
+
+            for cbz_file in gallery_dir.files:
+                if current_idx >= start_idx and yielded < limit:
+                    yield cbz_file
+                    yielded += 1
+                    if yielded >= limit:
+                        return
+                current_idx += 1
+
+    def iter_gallery(
+        self, lang: _Language, limit: int = 100, page: int = 1
+    ) -> list[_GalleryCbzFile]:
+        """Get paginated gallery files for a specific language."""
+        return list(self.iter_gallery_generator(lang, limit, page))
 
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
