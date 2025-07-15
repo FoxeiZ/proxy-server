@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from quart import Blueprint, Response, request
+from quart import Blueprint, Response, redirect, request
 
 if TYPE_CHECKING:
     from quart import Quart
@@ -21,9 +21,14 @@ async def root(url: str):
     # This allows server-relative and protocol-relative URLs to work.
     referer = request.headers.get("referer")
     if not referer:
-        return Response(status=404)
+        return redirect("/next/" + url.lstrip("/"))
 
-    netloc = referer.split("/p/")[-1].split("/")[0]
+    referer_parts = referer.split("/p/", maxsplit=1)
+    if len(referer_parts) < 2:
+        return redirect("/next/" + url.lstrip("/"))
+
+    url = url.lstrip("/").replace("..", "")  # sanitize
+    netloc = referer_parts[-1].split("/")[0]
     redirect_url = f"/p/{netloc}/{url}"
     if request.query_string:
         redirect_url += f"?{request.query_string.decode('utf-8')}"

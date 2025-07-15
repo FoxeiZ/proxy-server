@@ -30,7 +30,6 @@ class Requests(Singleton, CloudScraper):
         if "headers" in kwargs:
             headers = kwargs["headers"]
             if isinstance(headers, dict):
-                # Remove Host and Accept-Encoding headers to avoid issues with proxying
                 self._clean_headers(headers)
 
         return super().request(*args, **kwargs)

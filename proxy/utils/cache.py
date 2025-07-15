@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
 
 from ..singleton import Singleton
@@ -15,7 +16,7 @@ __all__ = ("GalleryInfoCache", "ResourceCache", "LRUCache")
 
 
 class LRUCache(OrderedDict[K, V]):
-    def __init__(self, max_size):
+    def __init__(self, max_size: int):
         super().__init__()
         self.max_size = max_size
 
@@ -40,12 +41,33 @@ class LRUCache(OrderedDict[K, V]):
 class GalleryInfoCache(LRUCache[int, "NhentaiGallery"], Singleton):
     """Cache for BeautifulSoup objects to avoid re-parsing the same HTML content."""
 
-    def __init__(self, max_size: int = 10):
-        super().__init__(max_size=max_size)
+    def __init__(self):
+        super().__init__(max_size=10)
 
 
 class ResourceCache(LRUCache[str, tuple[dict, bytes]], Singleton):
     """Cache for resources to avoid re-fetching the same content."""
 
-    def __init__(self, max_size: int = 100):
-        super().__init__(max_size=max_size)
+    def __init__(self):
+        super().__init__(max_size=100)
+
+
+class ThumbnailCache(LRUCache[str, bytes], Singleton):
+    """Cache for thumbnail images to avoid re-fetching the same content."""
+
+    def __init__(self):
+        super().__init__(max_size=50)
+
+    def read(self, key: Path | str) -> bytes:
+        key = Path(key)
+        if content := self.get(key.name):
+            return content
+
+        if not key.exists():
+            raise FileNotFoundError(f"Path {key} does not exist.")
+        if not key.is_file():
+            raise ValueError(f"Path {key} is not a file.")
+
+        content = key.read_bytes()
+        self.put(key.name, content)
+        return content
