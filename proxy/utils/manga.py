@@ -9,7 +9,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, Callable, overload
 
 from ..config import Config
 from ..enums import FileStatus
@@ -247,7 +247,6 @@ class _GalleryScanner:
         return self._gallery_dirs
 
     def _scan_gallery_dir(self, path: str | Path) -> list[_GalleryCbzFile]:
-        """Add a gallery directory to the internal storage."""
         path = Path(path)
         if not path.is_dir():
             return []
@@ -261,6 +260,18 @@ class _GalleryScanner:
         return cbz_files
 
     def add_gallery_dir(
+        self, lang: _Language, dir_name: _TitleDir
+    ) -> Callable[[], None]:
+        """Only an entry for the directory for future use."""
+        if lang not in self._gallery_dirs:
+            self._gallery_dirs[lang] = {}
+
+        if dir_name not in self._gallery_dirs[lang]:
+            self._gallery_dirs[lang][dir_name] = []
+
+        return lambda: self.scan_gallery_dir(lang, dir_name, sort=False)
+
+    def scan_gallery_dir(
         self, lang: _Language, dir_name: _TitleDir, *, sort: bool = True
     ) -> None:
         """Add a scanned directory to the internal storage."""
@@ -330,7 +341,7 @@ class _GalleryScanner:
                                 <= self.last_scanned  # and modification time is NOT greater than last scanned time
                             ):
                                 continue
-                        self.add_gallery_dir(le_name, se_name, sort=False)
+                        self.scan_gallery_dir(le_name, se_name, sort=False)
 
                 except (OSError, PermissionError):
                     continue  # skip dir if no access
@@ -507,16 +518,34 @@ def _make_gallery_path(
     return base_path / clean_title
 
 
+@overload
 def make_gallery_path(
+    *,
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
+    cache: Literal[False] = False,
+) -> Path: ...
+
+
+@overload
+def make_gallery_path(
     *,
-    cache: bool = True,
-) -> Path:
+    gallery_title: ParsedMangaTitle,
+    gallery_language: str,
+    cache: Literal[True],
+) -> tuple[Path, Callable[[], None]]: ...
+
+
+def make_gallery_path(
+    *,
+    gallery_title: ParsedMangaTitle,
+    gallery_language: str,
+    cache: bool = False,
+) -> Path | tuple[Path, Callable[[], None]]:
     """Create the gallery path based on the gallery information."""
     ret = _make_gallery_path(gallery_title, gallery_language)
     if cache:
-        GalleryScanner.add_gallery_dir(gallery_language, ret.name)
+        return ret, GalleryScanner.add_gallery_dir(gallery_language, ret.name)
     return ret
 
 
@@ -573,7 +602,9 @@ def check_file_status(
             )
         if not gallery_title:
             raise ValueError("gallery_title must be provided if gallery_path is not.")
-        gallery_path = make_gallery_path(gallery_title, gallery_language)
+        gallery_path = make_gallery_path(
+            gallery_title=gallery_title, gallery_language=gallery_language
+        )
 
     return _check_file_status(gallery_id, gallery_path)
 
@@ -582,7 +613,9 @@ def check_file_status_gallery(
     gallery_info: NhentaiGallery,
 ) -> FileStatus:
     """Check if a gallery is already downloaded based on its information."""
-    gallery_path = make_gallery_path(gallery_info["title"], gallery_info["language"])
+    gallery_path = make_gallery_path(
+        gallery_title=gallery_info["title"], gallery_language=gallery_info["language"]
+    )
     if not gallery_path.exists():
         return FileStatus.NOT_FOUND
 

@@ -79,9 +79,10 @@ class DownloadPool(Singleton):
         )
         progress.status = DownloadStatus.DOWNLOADING
 
-        gallery_path = make_gallery_path(
-            info["title"], gallery_language=gallery_language, cache=True
-        ) / str(gallery_id)
+        gallery_path, _ = make_gallery_path(
+            gallery_title=info["title"], gallery_language=gallery_language, cache=True
+        )
+        gallery_path = gallery_path / str(gallery_id)
         if not gallery_path.exists():
             gallery_path.mkdir(parents=True, exist_ok=True)
 
@@ -167,8 +168,8 @@ class DownloadPool(Singleton):
         logger.info("Download pool shutdown complete.")
 
     def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
-        gallery_path = make_gallery_path(
-            info["title"], gallery_language=info["language"], cache=True
+        gallery_path, scan_callback = make_gallery_path(
+            gallery_title=info["title"], gallery_language=info["language"], cache=True
         )
         if not gallery_path.exists():
             logger.error("Gallery path does not exist: %s", gallery_path)
@@ -205,6 +206,8 @@ class DownloadPool(Singleton):
                     if img_file.is_file():
                         img_file.unlink()
                 img_dir.rmdir()
+
+        scan_callback()
 
     def add(self, info: "NhentaiGallery"):
         """Submit a download task for the given gallery information."""
