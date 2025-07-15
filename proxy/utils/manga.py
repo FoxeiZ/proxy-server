@@ -246,9 +246,7 @@ class _GalleryScanner:
             self.scan(self.path)
         return self._gallery_dirs
 
-    def _scan_gallery_dir(
-        self, lang: _Language, path: str | Path
-    ) -> list[_GalleryCbzFile]:
+    def _scan_gallery_dir(self, path: str | Path) -> list[_GalleryCbzFile]:
         """Add a gallery directory to the internal storage."""
         path = Path(path)
         if not path.is_dir():
@@ -269,15 +267,13 @@ class _GalleryScanner:
         if lang not in self._gallery_dirs:
             self._gallery_dirs[lang] = {}
 
-        if dir_name in self._gallery_dirs[lang]:
-            return
-
         dir_path = Path(self.path) / lang / dir_name
         if not dir_path.is_dir():
             return
 
-        chapter_files = self._scan_gallery_dir(lang, dir_path)
+        chapter_files = self._scan_gallery_dir(dir_path)
         if not chapter_files:
+            self.remove_gallery_dir(lang, dir_name)
             return
         self._gallery_dirs[lang][dir_name] = chapter_files
 
@@ -415,7 +411,7 @@ class _GalleryScanner:
             return []
 
         name = name.lower().strip()
-        for lang, dirs in self.gallery_dirs.items():
+        for _, dirs in self.gallery_dirs.items():
             if series := dirs.get(name):
                 return series
 
