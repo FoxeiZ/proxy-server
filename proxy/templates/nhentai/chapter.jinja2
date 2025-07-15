@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description"
+              content="Gallery detail page for {{ gallery.info.title or gallery.info.series }}">
+        <title>{{ gallery.info.title or gallery.info.series or 'Gallery' }} - Detail</title>
+        <link rel="stylesheet"
+              href="{{ url_for('static', filename='nhentai/styles.css') }}">
+    </head>
+    <body>
+        <button class="dark-mode-toggle"
+                onclick="toggleDarkMode()"
+                title="Toggle dark mode">🌙</button>
+        <div class="container">
+            <div class="header">
+                <h1>{{ gallery.info.title or gallery.info.series or 'Untitled Gallery' }}</h1>
+                {% if gallery.info.series and gallery.info.title and gallery.info.series != gallery.info.title %}
+                    <div class="series">{{ gallery.info.series }}</div>
+                {% endif %}
+            </div>
+            <div class="content">
+                <div class="thumbnail-section">
+                    <img src="/galleries/thumbnail/{{ gallery.thumbnail.name }}"
+                         alt="{{ gallery.info.title or gallery.info.series or 'Gallery thumbnail' }}">
+                    <div class="gallery-id">ID: {{ gallery.id }}</div>
+                </div>
+                <div class="details-section">
+                    <h2>Gallery Information</h2>
+                    <div class="info-grid">
+                        {% if gallery.info.title %}
+                            <div class="info-item">
+                                <div class="label">Title</div>
+                                <div class="value">{{ gallery.info.title }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.series %}
+                            <div class="info-item">
+                                <div class="label">Series</div>
+                                <div class="value">{{ gallery.info.series }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.number %}
+                            <div class="info-item">
+                                <div class="label">Chapter/Issue Number</div>
+                                <div class="value">{{ gallery.info.number }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.language %}
+                            <div class="info-item">
+                                <div class="label">Language</div>
+                                <div class="value">{{ gallery.info.language }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.page_count %}
+                            <div class="info-item">
+                                <div class="label">Page Count</div>
+                                <div class="value">{{ gallery.info.page_count }} pages</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.penciller %}
+                            <div class="info-item">
+                                <div class="label">Artist</div>
+                                <div class="value">{{ gallery.info.penciller }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.writer %}
+                            <div class="info-item">
+                                <div class="label">Writer</div>
+                                <div class="value">{{ gallery.info.writer }}</div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.translator %}
+                            <div class="info-item">
+                                <div class="label">Translator</div>
+                                <div class="value">{{ gallery.info.translator }}</div>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="tags-section">
+                        <h3>Tags & Categories</h3>
+                        {% if gallery.info.tags %}
+                            <div class="tag-group">
+                                <div class="tag-category">Tags</div>
+                                <div class="tag-list">
+                                    {% for tag in gallery.info.tags %}<span class="tag">{{ tag }}</span>{% endfor %}
+                                </div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.genre %}
+                            <div class="tag-group">
+                                <div class="tag-category">Genres</div>
+                                <div class="tag-list">
+                                    {% for genre in gallery.info.genre %}<span class="tag">{{ genre }}</span>{% endfor %}
+                                </div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.characters %}
+                            <div class="tag-group">
+                                <div class="tag-category">Characters</div>
+                                <div class="tag-list">
+                                    {% for character in gallery.info.characters %}<span class="tag">{{ character }}</span>{% endfor %}
+                                </div>
+                            </div>
+                        {% endif %}
+                        {% if gallery.info.series_group %}
+                            <div class="tag-group">
+                                <div class="tag-category">Series Group</div>
+                                <div class="tag-list">
+                                    {% for group in gallery.info.series_group %}<span class="tag">{{ group }}</span>{% endfor %}
+                                </div>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="navigation">
+                <a href="/galleries" class="back-button">← Back to Galleries</a>
+                {% if gallery.info.web %}
+                    <a href="{{ gallery.info.web }}" class="web-link" target="_blank">View Original →</a>
+                {% endif %}
+            </div>
+        </div>
+        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
+    </body>
+</html>

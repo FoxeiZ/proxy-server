@@ -38,14 +38,26 @@ async def galleries_index():
     )
 
 
-@bp.route("/<int:gallery_id>")
+@bp.route("/series/<name>")
+async def gallery_series(name: str):
+    """Gallery series page."""
+    series = GalleryScanner.get_gallery_series(name)
+    if not series:
+        return "", 404
+    return await render_template(
+        "nhentai/gallery_series.jinja2",
+        series=series,
+    )
+
+
+@bp.route("chapter/<int:gallery_id>")
 async def gallery_detail(gallery_id: int):
     """Gallery detail page."""
     gallery = GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
     return await render_template(
-        "nhentai/gallery.jinja2",
+        "nhentai/chapter.jinja2",
         gallery=gallery,
     )
 

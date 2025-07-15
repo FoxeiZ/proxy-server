@@ -5,110 +5,42 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta name="description" content="Gallery page for browsing content">
         <title>Gallery</title>
-        <style>
-            * {
-                margin: 0;
-                padding: 0;
-                box-sizing: border-box;
-            }
-            
-            body {
-                font-family: Arial, sans-serif;
-                background-color: #f5f5f5;
-                padding: 20px;
-            }
-            
-            .header {
-                text-align: center;
-                margin-bottom: 30px;
-                color: #333;
-            }
-            
-            .gallery-grid {
-                max-width: 1200px;
-                margin: 0 auto;
-            }
-            
-            .gallery-row {
-                display: grid;
-                grid-template-columns: repeat(5, 1fr);
-                gap: 15px;
-                background: white;
-                padding: 15px;
-                border-radius: 8px;
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                margin-bottom: 20px;
-            }
-            
-            .gallery-item {
-                position: relative;
-                text-align: center;
-                min-width: 0; /* Prevents flex items from growing beyond container */
-            }
-            
-            .gallery-item img {
-                width: 100%;
-                height: 250px;
-                object-fit: cover;
-                object-position: center;
-                border-radius: 4px;
-                border: 1px solid #ddd;
-                display: block;
-                aspect-ratio: 3/4; /* Consistent portrait ratio */
-            }
-            
-            .gallery-item h3 {
-                font-size: 14px;
-                margin: 8px 0 4px 0;
-                color: #333;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-            
-            .gallery-item p {
-                font-size: 12px;
-                color: #666;
-                margin-bottom: 8px;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
-            }
-            
-            .gallery-item a {
-                display: block;
-                text-decoration: none;
-                color: inherit;
-                transition: opacity 0.2s ease;
-            }
-            
-            .gallery-item a:hover {
-                opacity: 0.8;
-            }
-        </style>
+        <link rel="stylesheet"
+              href="{{ url_for('static', filename='nhentai/styles.css') }}">
     </head>
     <body>
+        <button class="dark-mode-toggle"
+                onclick="toggleDarkMode()"
+                title="Toggle dark mode">🌙</button>
         <div class="header">
             <h1>Gallery, page {{ page }}</h1>
         </div>
         <div class="gallery-grid">
-            {% set items_per_row = 5 %}
-            {% set max_rows = 3 %}
-            {% set max_items = items_per_row * max_rows %}
-            {% set displayed_items = cbz_files[:max_items] %}
-            {% for row_start in range(0, displayed_items | length, items_per_row) %}
-                {% set row_items = displayed_items[row_start:row_start + items_per_row] %}
+            {% if cbz_files.galleries %}
+                {% set items_per_row = 5 %}
+                {% set displayed_items = cbz_files.galleries %}
+                {% for row_start in range(0, displayed_items | length, items_per_row) %}
+                    {% set row_items = displayed_items[row_start:row_start + items_per_row] %}
+                    <div class="gallery-row">
+                        {% for gallery_file in row_items %}
+                            <a href="/galleries/series/{{ gallery_file.path.parent.name }}"
+                               class="gallery-item">
+                                <img src="/galleries/thumbnail/{{ gallery_file.thumbnail.name }}"
+                                     alt="{{ gallery_file.info.series or 'Unknown Series' }}">
+                                <h3>{{ gallery_file.info.series or 'Unknown Series' }}</h3>
+                                <p>{{ gallery_file.info.title or 'No description' }}</p>
+                            </a>
+                        {% endfor %}
+                    </div>
+                {% endfor %}
+            {% else %}
                 <div class="gallery-row">
-                    {% for cbz_file in row_items %}
-                        <a href="{{ cbz_file.info.web }}" class="gallery-item">
-                            <img src="/galleries/thumbnail/{{ cbz_file.thumbnail.name }}"
-                                 alt="{{ cbz_file.info.title }}">
-                            <h3>{{ cbz_file.info.series }}</h3>
-                            <p>{{ cbz_file.info.title }}</p>
-                        </a>
-                    {% endfor %}
+                    <div class="gallery-item">
+                        <p>No galleries found for this language.</p>
+                    </div>
                 </div>
-            {% endfor %}
+            {% endif %}
         </div>
+        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
     </body>
 </html>

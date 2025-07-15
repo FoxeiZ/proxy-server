@@ -7,6 +7,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING, overload
 
@@ -15,7 +16,7 @@ from ..enums import FileStatus
 from .xml import ComicInfoDict, ComicInfoXML
 
 if TYPE_CHECKING:
-    from typing import Iterator, Literal
+    from typing import Literal
 
     from .._types.nhentai import NhentaiGallery, ParsedMangaTitle
 
@@ -44,6 +45,16 @@ IMAGE_TYPE_MAPPING = {
     "g": "gif",
 }
 SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
+
+
+@dataclass(eq=False, repr=False, slots=True)
+class _GalleryPaginate:
+    """Class to represent a paginated gallery."""
+
+    page: int
+    limit: int
+    galleries: list[_GalleryCbzFile]
+    total: int
 
 
 class _GalleryCbzFile:
@@ -374,38 +385,41 @@ class _GalleryScanner:
                 )
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
-    def iter_gallery_paginate(
-        self, lang: _Language, limit: int = 15, page: int = 1
-    ) -> Iterator[_GalleryCbzFile]:
-        """Generator that yields gallery files without creating intermediate lists."""
-        if lang not in self.gallery_dirs:
-            return
-
-        start_idx = (page - 1) * limit
-        current_idx = 0
-        yielded = 0
-
-        for gallery_dir in self.gallery_dirs.get(lang, {}).values():
-            if len(gallery_dir) == 0:
-                continue
-
-            for cbz_file in gallery_dir:
-                if current_idx >= start_idx and yielded < limit:
-                    yield cbz_file
-                    yielded += 1
-                    if yielded >= limit:
-                        return
-                current_idx += 1
-
     def get_gallery_paginate(
         self, lang: _Language, limit: int = 15, page: int = 1
-    ) -> list[_GalleryCbzFile]:
+    ) -> _GalleryPaginate:
         """Get paginated gallery files for a specific language."""
-        return list(self.iter_gallery_paginate(lang, limit, page))
+        galleries = self.gallery_dirs.get(lang, {})
+        if not galleries:
+            return _GalleryPaginate(page=page, limit=limit, galleries=[], total=0)
+
+        paginated_galleries = islice(
+            galleries.items(), (page - 1) * limit, page * limit
+        )
+        total = len(galleries)
+
+        return _GalleryPaginate(
+            page=page,
+            limit=limit,
+            galleries=[files[0] for _, files in paginated_galleries if files],
+            total=total,
+        )
 
     def get_chapter_file(self, gallery_id: int) -> _GalleryCbzFile | None:
         """Get a chapter file by its ID."""
         return self._chapter_files.get(gallery_id)
+
+    def get_gallery_series(self, name: str) -> list[_GalleryCbzFile]:
+        """Get a list of gallery files that match the series name."""
+        if not name:
+            return []
+
+        name = name.lower().strip()
+        for lang, dirs in self.gallery_dirs.items():
+            if series := dirs.get(name):
+                return series
+
+        return []
 
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
