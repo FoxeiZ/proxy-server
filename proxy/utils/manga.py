@@ -4,6 +4,7 @@ import json
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -48,7 +49,7 @@ SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
 class _GalleryCbzFile:
     def __init__(self, path: Path | str, force_extract: bool = False):
         self.path: Path = Path(path)
-        self._id: str = self.path.stem
+        self.id: int = int(self.path.stem)
 
         self._thumbnail_dir = Path(Config.cache_path) / "thumbnails"
         self._thumbnail: Path | None = None
@@ -78,7 +79,7 @@ class _GalleryCbzFile:
     def thumbnail(self) -> Path:
         """Get the thumbnail image path."""
         if self._thumbnail is None:
-            thumb = next(self.thumbnail_dir.glob(f"{self._id}.*"), None)
+            thumb = next(self.thumbnail_dir.glob(f"{self.id}.*"), None)
             if thumb is None:
                 thumb = self._extract_thumbnail()
             self._thumbnail = thumb
@@ -107,7 +108,7 @@ class _GalleryCbzFile:
         """Extract the first image from the CBZ file as a thumbnail."""
         if self._thumbnail:
             return self._thumbnail
-        thumbnail_path = next(self.thumbnail_dir.glob(f"{self._id}.*"), None)
+        thumbnail_path = next(self.thumbnail_dir.glob(f"{self.id}.*"), None)
         if thumbnail_path:
             return thumbnail_path
 
@@ -128,7 +129,7 @@ class _GalleryCbzFile:
             )
 
         p = Path(names[0])
-        thumbnail_path = self.thumbnail_dir / f"{self._id}{p.suffix}"
+        thumbnail_path = self.thumbnail_dir / f"{self.id}{p.suffix}"
         with (
             zip_file.open(names[0]) as source,
             open(thumbnail_path, "wb") as target,
@@ -189,103 +190,107 @@ class _GalleryCbzFile:
         return self.path != value.path
 
 
+@dataclass(eq=False, repr=False, slots=True)
 class _GalleryDir:
-    def __init__(self, path: Path | str):
-        self.path: Path = Path(path)
-        self._title: str = self.path.name
-        self._cbz_files: dict[str, _GalleryCbzFile] = {}
-        self._is_scanned: bool = False
+    path: Path
+    files: list[_GalleryCbzFile]
 
     @property
     def count(self) -> int:
-        if not self._is_scanned:
-            self.scan()
-        return len(self._cbz_files)
-
-    @property
-    def files(self) -> list[_GalleryCbzFile]:
-        """Get the list of CBZ files in the directory."""
-        if not self._is_scanned:
-            self.scan()
-        return list(self._cbz_files.values())
-
-    def scan(self):
-        if not self.path.is_dir():
-            return self
-
-        for entry in os.scandir(self.path):
-            if entry.is_file() and entry.name.endswith(".cbz"):
-                self._cbz_files[entry.name] = _GalleryCbzFile(entry.path)
-
-        self._is_scanned = True
-        return self
+        """Get the number of files in the directory."""
+        return len(self.files)
 
 
 class _GalleryScanner:
     __slots__ = (
         "last_scanned",
         "path",
-        "_scanned_dirs",
-        "_total_book_count",
+        "_gallery_dirs",
+        "_chapter_files",
     )
 
     def __init__(self, init_path: Path | str):
         """Initialize the directory scanner."""
         self.last_scanned: datetime | None = None
         self.path: Path = init_path if isinstance(init_path, Path) else Path(init_path)
-        self._scanned_dirs: dict[_Language, dict[_TitleDir, _GalleryDir]] = {}
-        self._total_book_count = 0
+
+        self._gallery_dirs: dict[_Language, dict[_TitleDir, list[_GalleryCbzFile]]] = {}
+        self._chapter_files: dict[int, _GalleryCbzFile] = {}
 
     @property
     def should_scan(self) -> bool:
         """Check if the directory should be scanned again."""
-        if not self._scanned_dirs or not self.last_scanned:
+        if not self._gallery_dirs or not self.last_scanned:
             return True
         return (datetime.now() - self.last_scanned).total_seconds() > 3600
 
     @property
-    def scanned_dirs(self) -> dict[_Language, dict[_TitleDir, _GalleryDir]]:
+    def gallery_dirs(self) -> dict[_Language, dict[_TitleDir, list[_GalleryCbzFile]]]:
         """Get the scanned directories."""
         if self.should_scan:
             self.scan(self.path)
-        return self._scanned_dirs
+        return self._gallery_dirs
 
-    def add_scanned_dir(
+    def _scan_gallery_dir(
+        self, lang: _Language, path: str | Path
+    ) -> list[_GalleryCbzFile]:
+        """Add a gallery directory to the internal storage."""
+        path = Path(path)
+        if not path.is_dir():
+            return []
+
+        cbz_files = []
+        for entry in os.scandir(path):
+            if entry.is_file() and entry.name.endswith(".cbz"):
+                cbz = _GalleryCbzFile(entry.path)
+                self._chapter_files[cbz.id] = cbz
+                cbz_files.append(cbz)
+        return cbz_files
+
+    def add_gallery_dir(
         self, lang: _Language, dir_name: _TitleDir, *, sort: bool = True
     ) -> None:
         """Add a scanned directory to the internal storage."""
-        if lang not in self._scanned_dirs:
-            self._scanned_dirs[lang] = {}
+        if lang not in self._gallery_dirs:
+            self._gallery_dirs[lang] = {}
 
-        if dir_name in self._scanned_dirs[lang]:
+        if dir_name in self._gallery_dirs[lang]:
             return
 
         dir_path = Path(self.path) / lang / dir_name
         if not dir_path.is_dir():
             return
 
-        gallery_dir = _GalleryDir(dir_path).scan()
-        if not gallery_dir.count:
+        chapter_files = self._scan_gallery_dir(lang, dir_path)
+        if not chapter_files:
             return
-        self._scanned_dirs[lang][dir_name] = gallery_dir
-        self._total_book_count += gallery_dir.count
+        self._gallery_dirs[lang][dir_name] = chapter_files
+
         if sort:
-            self._scanned_dirs[lang] = dict(
-                sorted(self._scanned_dirs[lang].items(), key=lambda item: item[0])
+            self._gallery_dirs[lang] = dict(
+                sorted(self._gallery_dirs[lang].items(), key=lambda item: item[0])
             )
 
-    def remove_scanned_dir(self, lang: _Language, dir_name: _TitleDir) -> None:
-        """Remove a scanned directory from the internal storage."""
-        if lang not in self._scanned_dirs or dir_name not in self._scanned_dirs[lang]:
-            return
-        self._total_book_count -= self._scanned_dirs[lang][dir_name].count
-        del self._scanned_dirs[lang][dir_name]
+    def remove_gallery_dir(self, lang: _Language, dir_name: _TitleDir) -> bool:
+        """Remove a gallery directory from the internal storage."""
+        if lang not in self._gallery_dirs:
+            return False
 
-    def clear_scanned_dirs(self) -> None:
-        """Clear all scanned directories."""
-        self._scanned_dirs.clear()
+        if dir_name not in self._gallery_dirs[lang]:
+            return False
+
+        for file in self._gallery_dirs[lang][dir_name]:
+            if file.id in self._chapter_files:
+                del self._chapter_files[file.id]
+
+        del self._gallery_dirs[lang][dir_name]
+        return True
+
+    def clear_gallery_dirs(self) -> None:
+        """Clear all gallery directories from the internal storage."""
+        self._gallery_dirs.clear()
+        self._chapter_files.clear()
         self.last_scanned = None
-        self._total_book_count = 0
 
     def scan(self, path: Path) -> None:
         """Scan the directory and store its path."""
@@ -294,75 +299,93 @@ class _GalleryScanner:
 
         try:
             for lang_entry in os.scandir(path):
-                if not lang_entry.is_dir():
+                le_name = lang_entry.name.lower()
+                if not lang_entry.is_dir() or le_name not in (
+                    "english",
+                    "japanese",
+                    "chinese",
+                ):
                     continue
 
                 try:
                     for sub_entry in os.scandir(lang_entry.path):
-                        if not sub_entry.is_dir() or sub_entry.name.startswith("."):
+                        se_name = sub_entry.name.lower()
+                        if not sub_entry.is_dir() or se_name.startswith("."):
                             continue
-                        if sub_entry.name in self._scanned_dirs.get(
-                            lang_entry.name, {}
-                        ):
+                        if se_name in self._gallery_dirs.get(le_name, {}):
                             if (
                                 self.last_scanned  # yes scanned
                                 and datetime.fromtimestamp(sub_entry.stat().st_mtime)
                                 <= self.last_scanned  # and modification time is NOT greater than last scanned time
                             ):
                                 continue
+                        self.add_gallery_dir(le_name, se_name, sort=False)
 
-                        self.add_scanned_dir(
-                            lang_entry.name, sub_entry.name, sort=False
-                        )
                 except (OSError, PermissionError):
                     continue  # skip dir if no access
         except (OSError, PermissionError):
             return  # return now
 
-        for lang_entry in self._scanned_dirs:
-            self._scanned_dirs[lang_entry] = dict(
-                sorted(self._scanned_dirs[lang_entry].items(), key=lambda item: item[0])
+        if not self._gallery_dirs:
+            raise FileNotFoundError(f"No galleries found in {path}.")
+
+        for lang_entry in self._gallery_dirs:
+            self._gallery_dirs[lang_entry] = dict(
+                sorted(self._gallery_dirs[lang_entry].items(), key=lambda item: item[0])
             )
 
         self.last_scanned = datetime.now()
 
-    def contains(self, lang: _Language, dir_name: _TitleDir) -> Path | None:
+    def contains(self, lang: _Language, dir_name: _TitleDir) -> _GalleryDir | None:
         """Check if the scanned directories contain a specific file."""
-        if lang not in self.scanned_dirs:
+        if lang not in self.gallery_dirs:
             return None
 
-        for name_variant in (dir_name, dir_name.lower()):
-            if name_variant in self.scanned_dirs[lang]:
-                return self.scanned_dirs[lang][name_variant].path
+        for dir_name_variant in (dir_name, dir_name.lower()):
+            if gallery_dir := self.gallery_dirs[lang].get(dir_name_variant):
+                return _GalleryDir(
+                    path=Path(self.path) / lang / dir_name_variant,
+                    files=gallery_dir,
+                )
         return None
 
     def fuzzy_contains(
         self, lang: _Language, dir_name: _TitleDir, match_threshold: float = 0.55
-    ) -> list[tuple[float, Path]]:
+    ) -> list[tuple[float, _GalleryDir]]:
         """Check if the scanned directories contain a specific file (fuzzy match)."""
-        matched: list[tuple[float, Path]] = []
-        for scanned_dir in self.scanned_dirs.get(lang, dict()).keys():
+        matched: list[tuple[float, _GalleryDir]] = []
+        for gallery_dir, files in self.gallery_dirs.get(lang, dict()).items():
             sm = SequenceMatcher(
-                lambda x: x in ("-", "_"), scanned_dir.lower(), dir_name.lower()
+                lambda x: x in ("-", "_"), gallery_dir.lower(), dir_name.lower()
             )
             ratio = round(sm.ratio(), 2)
             if ratio >= match_threshold:
-                matched.append((ratio, Path(self.path) / lang / scanned_dir))
+                matched.append(
+                    (
+                        ratio,
+                        _GalleryDir(
+                            path=Path(self.path) / lang / gallery_dir, files=files
+                        ),
+                    )
+                )
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
-    def iter_gallery_generator(
+    def iter_gallery_paginate(
         self, lang: _Language, limit: int = 15, page: int = 1
     ) -> Iterator[_GalleryCbzFile]:
         """Generator that yields gallery files without creating intermediate lists."""
+        if lang not in self.gallery_dirs:
+            return
+
         start_idx = (page - 1) * limit
         current_idx = 0
         yielded = 0
 
-        for gallery_dir in self.scanned_dirs.get(lang, {}).values():
-            if gallery_dir.count == 0:
+        for gallery_dir in self.gallery_dirs.get(lang, {}).values():
+            if len(gallery_dir) == 0:
                 continue
 
-            for cbz_file in gallery_dir.files:
+            for cbz_file in gallery_dir:
                 if current_idx >= start_idx and yielded < limit:
                     yield cbz_file
                     yielded += 1
@@ -370,11 +393,15 @@ class _GalleryScanner:
                         return
                 current_idx += 1
 
-    def iter_gallery(
-        self, lang: _Language, limit: int = 100, page: int = 1
+    def get_gallery_paginate(
+        self, lang: _Language, limit: int = 15, page: int = 1
     ) -> list[_GalleryCbzFile]:
         """Get paginated gallery files for a specific language."""
-        return list(self.iter_gallery_generator(lang, limit, page))
+        return list(self.iter_gallery_paginate(lang, limit, page))
+
+    def get_chapter_file(self, gallery_id: int) -> _GalleryCbzFile | None:
+        """Get a chapter file by its ID."""
+        return self._chapter_files.get(gallery_id)
 
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
@@ -452,18 +479,16 @@ def _make_gallery_path(
         )
 
     clean_title = remove_special_characters(main_title).lower()
-    if gallery_path := GalleryScanner.contains(gallery_language, clean_title):
-        return gallery_path
-
-    if gallery_path := GalleryScanner.contains(gallery_language, main_title.lower()):
-        return gallery_path
-
     for path_variant in (clean_title, main_title.lower()):
+        gallery_dir = GalleryScanner.contains(gallery_language, path_variant)
+        if gallery_dir:
+            return gallery_dir.path
+
         matched = GalleryScanner.fuzzy_contains(
             gallery_language, path_variant, match_threshold=0.58
         )
         if matched:
-            return matched[0][1]
+            return matched[0][1].path
 
     return base_path / clean_title
 
@@ -477,7 +502,7 @@ def make_gallery_path(
     """Create the gallery path based on the gallery information."""
     ret = _make_gallery_path(gallery_title, gallery_language)
     if cache:
-        GalleryScanner.add_scanned_dir(gallery_language, ret.name)
+        GalleryScanner.add_gallery_dir(gallery_language, ret.name)
     return ret
 
 

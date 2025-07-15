@@ -179,44 +179,36 @@ def modify_chapter(
         pool = DownloadPool()
         is_downloading = pool.is_downloading(gallery_data["id"])
 
-        # Determine button state based on file status and download status
+        hint_text = ""
+        attrs = {
+            "id": "add",
+            "style": "min-width: unset; padding: 0 0.75rem",
+            "href": "#",
+        }
         if file_status == FileStatus.CONVERTED:
             button_text = "Converted"
-            button_class = "btn btn-primary btn-disabled"
             button_icon = "fa fa-check"
-            is_disabled = True
+            hint_text = "Go to the converted gallery"
+            attrs["class"] = "btn btn-primary tooltip"
+            attrs["href"] = f"/galleries/{gallery_id}"
         elif file_status == FileStatus.COMPLETED:
             button_text = "Downloaded"
-            button_class = "btn btn-info btn-disabled"
             button_icon = "fa fa-check"
-            is_disabled = True
+            hint_text = "Click to convert to CBZ"
+            attrs["class"] = "btn btn-info tooltip"
+            attrs["onclick"] = f"addGallery(event, {gallery_id});"
         elif is_downloading:
             button_text = "Downloading..."
-            button_class = "btn btn-primary btn-disabled"
+            attrs["class"] = "btn btn-primary btn-disabled"
             button_icon = "fa fa-spinner fa-spin"
-            is_disabled = True
         else:
             button_text = "Add"
-            button_class = "btn btn-primary"
             button_icon = "fa fa-plus"
-            is_disabled = False
+            hint_text = "Click to add to download queue"
+            attrs["class"] = "btn btn-primary tooltip"
+            attrs["onclick"] = f"addGallery(event, {gallery_id});"
 
-        _a = soup.new_tag(
-            "a",
-            attrs={
-                "class": button_class,
-                "id": "add",
-                "style": "min-width: unset; padding: 0 0.75rem",
-                **(
-                    {
-                        "href": "#",
-                        "onclick": f"addGallery(event, {gallery_id});",
-                    }
-                    if not is_disabled
-                    else {}
-                ),
-            },
-        )
+        _a = soup.new_tag("a", attrs=attrs)
         _a.string = f"{button_text} "
 
         _i = soup.new_tag(
@@ -224,6 +216,16 @@ def modify_chapter(
             attrs={"class": button_icon},
         )
         _a.append(_i)
+
+        if hint_text:
+            _top = soup.new_tag(
+                "div",
+                attrs={"class": "top"},
+            )
+            _top.append(soup.new_tag("i"))
+            _top.string = hint_text
+            _a.append(_top)
+
         return _a
 
     def create_image_proxy():
