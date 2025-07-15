@@ -386,7 +386,7 @@ class _GalleryScanner:
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
     def get_gallery_paginate(
-        self, lang: _Language, limit: int = 15, page: int = 1
+        self, lang: _Language, limit: int = 20, page: int = 1
     ) -> _GalleryPaginate:
         """Get paginated gallery files for a specific language."""
         galleries = self.gallery_dirs.get(lang, {})

@@ -17,7 +17,7 @@
         </div>
         <div class="gallery-grid">
             {% if cbz_files.galleries %}
-                {% set items_per_row = 5 %}
+                {% set items_per_row = 4 %}
                 {% set displayed_items = cbz_files.galleries %}
                 {% for row_start in range(0, displayed_items | length, items_per_row) %}
                     {% set row_items = displayed_items[row_start:row_start + items_per_row] %}
