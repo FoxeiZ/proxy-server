@@ -50,17 +50,33 @@ class XMLWriter:
         if not hasattr(self, "root_tag"):
             return ""
 
+        def _escape_xml(text: str) -> str:
+            """Escape XML special characters"""
+            if not text:
+                return ""
+            return (
+                str(text)
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&#39;")
+            )
+
         def _build_attrs(attrs_dict):
             """Helper to build attribute string"""
             if not attrs_dict:
                 return ""
-            return " " + " ".join(f'{k}="{v}"' for k, v in attrs_dict.items())
+            return " " + " ".join(
+                f'{k}="{_escape_xml(v)}"' for k, v in attrs_dict.items()
+            )
 
         def _build_element(element, indent=""):
             """Helper to build element string"""
             attrs = _build_attrs(element["attributes"])
             if element["text"]:
-                return f"{indent}<{element['tag']}{attrs}>{element['text']}</{element['tag']}>"
+                escaped_text = _escape_xml(str(element["text"]))
+                return f"{indent}<{element['tag']}{attrs}>{escaped_text}</{element['tag']}>"
             else:
                 return f"{indent}<{element['tag']}{attrs}/>"
 
@@ -110,7 +126,9 @@ class XMLWriter:
         self.add_element("Translator", gallery_info["scanlator"])
         self.add_element("Tags", ", ".join(gallery_info["tags"]))
         self.add_element("SeriesGroup", ", ".join(gallery_info["parodies"]))
-        self.add_element("Genre", ", ".join(gallery_info["characters"]))
+        self.add_element(
+            "Genre", ", ".join(gallery_info["characters"])
+        )  # this is purposefully set to characters DONT CHANGE
         self.add_element("Characters", ", ".join(gallery_info["characters"]))
         self.add_element("Web", f"https://nhentai.net/g/{gallery_info['id']}")
         self.add_element("Translated", "Yes" if gallery_info["translated"] else "No")
