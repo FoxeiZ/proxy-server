@@ -49,6 +49,10 @@ SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
 class _GalleryCbzFile:
     def __init__(self, path: Path | str, force_extract: bool = False):
         self.path: Path = Path(path)
+        if not self.path.stem.isdigit():
+            raise ValueError(
+                f"Filename stem '{self.path.stem}' is not numeric and cannot be used as an ID."
+            )
         self.id: int = int(self.path.stem)
 
         self._thumbnail_dir = Path(Config.cache_path) / "thumbnails"
@@ -324,10 +328,10 @@ class _GalleryScanner:
                 except (OSError, PermissionError):
                     continue  # skip dir if no access
         except (OSError, PermissionError):
-            return  # return now
-
-        if not self._gallery_dirs:
-            raise FileNotFoundError(f"No galleries found in {path}.")
+            if not any(entry.is_dir() for entry in os.scandir(path)):
+                raise FileNotFoundError(f"No directories found in {path}.")
+            if not self._gallery_dirs:
+                raise FileNotFoundError(f"No galleries found in {path}.")
 
         for lang_entry in self._gallery_dirs:
             self._gallery_dirs[lang_entry] = dict(
