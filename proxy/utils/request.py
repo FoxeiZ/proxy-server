@@ -34,6 +34,7 @@ class Requests(Singleton, CloudScraper):
         headers.pop("X-Content-Security-Policy", None)
         headers.pop("Remote-Addr", None)
         headers.pop("X-Forwarded-For", None)
+
         cookies = headers.pop("Cookie", None)
         if cookies:
             cookie = SimpleCookie(cookies)

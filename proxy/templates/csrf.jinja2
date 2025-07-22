@@ -252,6 +252,77 @@
                 margin-bottom: 20px;
             }
             
+            /* Mobile-specific styles */
+            .mobile-verification {
+                display: none;
+                margin-top: 30px;
+            }
+            
+            .verification-iframe {
+                width: 100%;
+                height: 500px;
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                margin-bottom: 20px;
+            }
+            
+            .continue-button {
+                background: var(--button-success);
+                color: var(--header-text);
+                padding: 15px 30px;
+                border: none;
+                border-radius: 4px;
+                font-size: 18px;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 15px;
+            }
+            
+            .continue-button:hover {
+                background: var(--button-success-hover);
+            }
+            
+            .continue-button:disabled {
+                background: var(--text-secondary);
+                cursor: not-allowed;
+            }
+            
+            .mobile-help {
+                background: var(--info-bg);
+                padding: 15px;
+                border-radius: 4px;
+                margin-bottom: 20px;
+                font-size: 14px;
+                color: var(--text-secondary);
+                text-align: center;
+            }
+            
+            .desktop-only {
+                display: block;
+            }
+            
+            .mobile-only {
+                display: none;
+            }
+            
+            @media (max-width: 768px) {
+                .mobile-verification {
+                    display: block;
+                }
+                
+                .desktop-only {
+                    display: none;
+                }
+                
+                .mobile-only {
+                    display: block;
+                }
+                
+                .verification-iframe {
+                    height: 400px;
+                }
+            }
+            
             /* Responsive Design */
             @media (max-width: 768px) {
                 .csrf-container {
@@ -311,7 +382,7 @@
                     <strong>Security Check Required:</strong> {{ error_message }}
                 </div>
             {% endif %}
-            <div class="instructions">
+            <div class="instructions desktop-only">
                 <h2>Follow these steps to continue:</h2>
                 <div class="step">
                     <div class="step-number">1</div>
@@ -363,7 +434,25 @@
                     </div>
                 </div>
             </div>
-            <form id="csrfForm" class="csrf-form" method="post" action="/csrf">
+            <!-- Mobile-specific interface -->
+            <div class="mobile-verification mobile-only">
+                <div class="mobile-help">
+                    📱 <strong>Mobile Interface:</strong> Complete the verification in the frame below, then click "Continue"
+                </div>
+                <iframe src="{{ problem_url }}"
+                        class="verification-iframe"
+                        id="verificationFrame"
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-top-navigation allow-popups">
+                </iframe>
+                <button onclick="checkCookiesAndContinue()"
+                        class="continue-button"
+                        id="continueBtn">✅ I've Completed Verification - Continue</button>
+                <div class="mobile-help">Complete the security challenge in the frame above, then click the continue button.</div>
+            </div>
+            <form id="csrfForm"
+                  class="csrf-form desktop-only"
+                  method="post"
+                  action="/csrf">
                 {% if error_message %}<div class="status-message status-error status-show">❌ {{ error_message }}</div>{% endif %}
                 <div class="form-group">
                     <label for="cf_clearance" class="form-label">Complete Cookie String:</label>
@@ -388,9 +477,71 @@
         </div>
         <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
         <script>
-            // Auto-focus the input field
+            // Mobile detection
+            function isMobileDevice() {
+                return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+                    window.innerWidth <= 768;
+            }
+
+            // Show appropriate interface based on device
+            function initializeInterface() {
+                const isMobile = isMobileDevice();
+                const desktopElements = document.querySelectorAll('.desktop-only');
+                const mobileElements = document.querySelectorAll('.mobile-only');
+
+                if (isMobile) {
+                    desktopElements.forEach(el => el.style.display = 'none');
+                    mobileElements.forEach(el => el.style.display = 'block');
+                } else {
+                    desktopElements.forEach(el => el.style.display = 'block');
+                    mobileElements.forEach(el => el.style.display = 'none');
+                }
+            }
+
+            // Mobile interface: Check cookies and auto-submit
+            function checkCookiesAndContinue() {
+                try {
+                    // Get all cookies
+                    const cookies = document.cookie;
+                    if (cookies && cookies.includes('cf_clearance')) {
+                        // Auto-submit with cookies
+                        const form = document.getElementById('csrfForm');
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'cf_clearance';
+                        input.value = cookies;
+                        form.appendChild(input);
+                        form.submit();
+                    } else {
+                        alert('Please complete the verification challenge in the frame above first, then try again.');
+                    }
+                } catch (error) {
+                    console.error('Error checking cookies:', error);
+                    alert('Unable to detect verification completion. Please ensure you completed the challenge in the frame above.');
+                }
+            }
+
+            // Auto-focus the input field (for desktop)
             document.addEventListener('DOMContentLoaded', function() {
-                document.getElementById('cf_clearance').focus();
+                initializeInterface();
+
+                const input = document.getElementById('cf_clearance');
+                if (input && !isMobileDevice()) {
+                    input.focus();
+                }
+
+                // Optional: Listen for iframe load events
+                const iframe = document.getElementById('verificationFrame');
+                if (iframe) {
+                    iframe.addEventListener('load', function() {
+                        console.log('Verification frame loaded');
+                    });
+                }
+            });
+
+            // Handle window resize to switch interfaces if needed
+            window.addEventListener('resize', function() {
+                initializeInterface();
             });
         </script>
     </body>
