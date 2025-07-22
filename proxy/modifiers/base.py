@@ -33,6 +33,14 @@ class ModifyRule(Singleton):
             func: Callable[[BeautifulSoup, str], None],
         ) -> Callable[[BeautifulSoup, str], None]:
             instance = cls()
+            if not isinstance(func, Callable):
+                raise TypeError("func must be a callable")
+            if pattern in instance.html_modifiers:
+                raise ValueError(
+                    f"HTML modification rule for pattern '{pattern}' already exists"
+                )
+            _ = re.compile(pattern)  # Validate the pattern
+
             instance.html_modifiers[pattern] = func
             logger.info(
                 "Added HTML modification rule: %s -> %s", pattern, func.__name__
