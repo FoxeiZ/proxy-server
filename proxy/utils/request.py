@@ -27,11 +27,13 @@ class Requests(Singleton, CloudScraper):
         """Remove headers that may cause issues with proxying."""
         # Remove headers that are not needed or may cause issues
         headers.pop("Host", None)
+        headers.pop("User-Agent", None)
         headers.pop("Accept-Encoding", None)
         headers.pop("Content-Length", None)
         headers.pop("Content-Security-Policy", None)
         headers.pop("X-Content-Security-Policy", None)
         headers.pop("Remote-Addr", None)
+        headers.pop("X-Forwarded-For", None)
         cookies = headers.pop("Cookie", None)
         if cookies:
             cookie = SimpleCookie(cookies)
