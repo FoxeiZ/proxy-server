@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
 
+from ..errors import NeedToHandle
 from ..singleton import Singleton
 from ..utils.logger import get_logger
 
@@ -26,7 +27,7 @@ class ModifyRule(Singleton):
 
     @classmethod
     def add_html_rule(cls, pattern: str):
-        """Add a modification rule to the cache."""
+        """Add a HTML modification rule."""
 
         def wrapper(
             func: Callable[[BeautifulSoup, str], None],
@@ -42,7 +43,7 @@ class ModifyRule(Singleton):
 
     @classmethod
     def add_js_rule(cls, pattern: str):
-        """Add a JavaScript modification rule to the cache."""
+        """Add a JavaScript modification rule."""
 
         def wrapper(func: Callable[[str], str]) -> Callable[[str], str]:
             instance = cls()
@@ -137,6 +138,9 @@ def modify_html_content(
                 logger.info("Modified %s to: %s", url, tag[attr_name])
 
         return ModifyRule().modify_html(page_url, soup, html_content)
+
+    except NeedToHandle as e:
+        raise e from None
 
     except Exception as e:
         logger.error("Failed to parse HTML content: %s", e)

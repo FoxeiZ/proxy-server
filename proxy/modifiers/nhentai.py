@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup, Tag
 
 from ..downloader import DownloadPool
 from ..enums import FileStatus
+from ..errors import NeedCSRF
 from ..utils import (
     GalleryInfoCache,
     check_file_status,
@@ -254,11 +255,31 @@ def modify_chapter(
     logger.info("Modified button to download gallery.")
 
 
+def modify_cf_chl(soup: BeautifulSoup) -> bool:
+    _title = soup.find("title")
+    if not _title or not isinstance(_title, Tag):
+        return False
+    if _title.string == "Just a moment...":
+        return True
+    return False
+
+
 @ModifyRule.add_html_rule(r"nhentai\.net")
 def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
     logger.info("Modifying gallery page content")
+    if modify_cf_chl(soup):
+        raise NeedCSRF(
+            "Cloudflare challenge detected, CSRF token is required to proceed."
+        )
 
     remove_ads(soup)
+
+    _logo = soup.find("a", class_="logo")
+    if _logo and isinstance(_logo, Tag):
+        _img = _logo.find("img")
+        if _img and isinstance(_img, Tag):
+            _img["src"] = "/p/nhentai.net/" + _img["src"].lstrip("/")  # type: ignore
+
     for gallery_div in soup.find_all("div", class_="gallery"):
         if not isinstance(gallery_div, Tag):
             continue

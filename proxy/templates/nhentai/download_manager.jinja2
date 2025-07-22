@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description"
+              content="Download Manager - Monitor chapter downloads">
+        <title>Download Manager</title>
+        <link rel="stylesheet"
+              href="{{ url_for('static', filename='nhentai/styles.css') }}">
+        <style>
+            .download-container {
+                max-width: 1000px;
+                margin: 0 auto;
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                box-shadow: var(--shadow);
+            }
+            
+            .download-item {
+                padding: 20px;
+                border-bottom: 1px solid var(--border-color);
+                transition: background-color 0.3s ease;
+            }
+            
+            .download-item:last-child {
+                border-bottom: none;
+            }
+            
+            .download-item:hover {
+                background: var(--info-bg);
+            }
+            
+            .download-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 15px;
+            }
+            
+            .download-title {
+                font-size: 16px;
+                font-weight: bold;
+                color: var(--text-primary);
+                margin: 0;
+                flex: 1;
+                margin-right: 15px;
+            }
+            
+            .download-status {
+                padding: 4px 12px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: bold;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+            }
+            
+            .status-downloading {
+                background: #007bff;
+                color: white;
+            }
+            
+            .status-completed {
+                background: var(--button-success);
+                color: white;
+            }
+            
+            .status-failed {
+                background: #dc3545;
+                color: white;
+            }
+            
+            .status-pending {
+                background: #ffc107;
+                color: #212529;
+            }
+            
+            .progress-container {
+                margin-bottom: 10px;
+            }
+            
+            .progress-bar {
+                width: 100%;
+                height: 8px;
+                background: var(--border-color);
+                border-radius: 4px;
+                overflow: hidden;
+                position: relative;
+            }
+            
+            .progress-fill {
+                height: 100%;
+                background: linear-gradient(90deg, var(--button-primary), var(--button-primary-hover));
+                border-radius: 4px;
+                transition: width 0.3s ease;
+                position: relative;
+            }
+            
+            .progress-fill.completed {
+                background: linear-gradient(90deg, var(--button-success), var(--button-success-hover));
+            }
+            
+            .progress-fill.failed {
+                background: linear-gradient(90deg, #dc3545, #c82333);
+            }
+            
+            .progress-info {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                font-size: 14px;
+                color: var(--text-secondary);
+                margin-top: 8px;
+            }
+            
+            .progress-text {
+                font-weight: 500;
+            }
+            
+            .progress-percentage {
+                font-weight: bold;
+                color: var(--button-primary);
+            }
+            
+            .empty-state {
+                text-align: center;
+                padding: 60px 20px;
+                color: var(--text-secondary);
+            }
+            
+            .empty-state h2 {
+                font-size: 24px;
+                margin-bottom: 10px;
+                color: var(--text-primary);
+            }
+            
+            .empty-state p {
+                font-size: 16px;
+                margin-bottom: 20px;
+            }
+            
+            .refresh-button {
+                background: var(--button-primary);
+                color: var(--header-text);
+                padding: 8px 16px;
+                border: none;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 14px;
+                cursor: pointer;
+                border-radius: 4px;
+                margin-left: 10px;
+            }
+            
+            .refresh-button:hover {
+                background: var(--button-primary-hover);
+            }
+            
+            .auto-refresh {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 14px;
+                color: var(--text-secondary);
+                margin-bottom: 20px;
+            }
+            
+            .auto-refresh input[type="checkbox"] {
+                margin: 0;
+            }
+            
+            .download-stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
+                margin-bottom: 30px;
+            }
+            
+            .stat-card {
+                background: var(--info-bg);
+                padding: 15px;
+                border-left: 4px solid var(--button-primary);
+                text-align: center;
+            }
+            
+            .stat-number {
+                font-size: 24px;
+                font-weight: bold;
+                color: var(--button-primary);
+                margin-bottom: 5px;
+            }
+            
+            .stat-label {
+                font-size: 12px;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                color: var(--text-secondary);
+            }
+            
+            .download-stats-container {
+                padding: 20px;
+            }
+            
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .download-container {
+                    margin: 0;
+                }
+                
+                .download-item {
+                    padding: 15px;
+                }
+                
+                .download-header {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 10px;
+                }
+                
+                .download-title {
+                    margin-right: 0;
+                    font-size: 14px;
+                }
+                
+                .progress-info {
+                    flex-direction: column;
+                    align-items: flex-start;
+                    gap: 5px;
+                }
+                
+                .download-stats {
+                    grid-template-columns: repeat(2, 1fr);
+                    gap: 10px;
+                }
+                
+                .stat-card {
+                    padding: 12px;
+                }
+                
+                .stat-number {
+                    font-size: 20px;
+                }
+            }
+            
+            @media (max-width: 480px) {
+                .download-item {
+                    padding: 12px;
+                }
+                
+                .download-title {
+                    font-size: 13px;
+                }
+                
+                .download-stats {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <button class="dark-mode-toggle"
+                onclick="toggleDarkMode()"
+                title="Toggle dark mode">🌙</button>
+        <div class="header">
+            <h1>Download Manager</h1>
+            <div class="subtitle">Monitor chapter download progress</div>
+        </div>
+        <div class="navigation-top">
+            <a href="/galleries" class="back-button">← Back to Galleries</a>
+            <button id="refreshBtn" class="refresh-button" onclick="refreshDownloads()">🔄 Refresh</button>
+        </div>
+        <div class="download-container">
+            <!-- Download Statistics -->
+            <div class="download-stats-container">
+                <div class="auto-refresh">
+                    <input type="checkbox" id="autoRefresh" checked>
+                    <label for="autoRefresh">Auto-refresh every 2 seconds</label>
+                </div>
+                <div class="download-stats" id="downloadStats">
+                    <div class="stat-card">
+                        <div class="stat-number" id="totalDownloads">0</div>
+                        <div class="stat-label">Total Downloads</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="activeDownloads">0</div>
+                        <div class="stat-label">Active</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="completedDownloads">0</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-number" id="failedDownloads">0</div>
+                        <div class="stat-label">Failed</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Downloads List -->
+            <div id="downloadsList">
+                <div class="empty-state">
+                    <h2>No Downloads</h2>
+                    <p>No downloads are currently in progress.</p>
+                </div>
+            </div>
+        </div>
+        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
+        <script>
+            let autoRefreshInterval;
+
+            async function fetchDownloads() {
+                try {
+                    const response = await fetch('/galleries/download-manager/progress');
+                    const downloads = await response.json();
+                    updateDownloadsList(downloads);
+                    updateStats(downloads);
+                } catch (error) {
+                    console.error('Failed to fetch downloads:', error);
+                }
+            }
+
+            function updateStats(downloads) {
+                const total = downloads.length;
+                const active = downloads.filter(d => d.status === 'downloading' || d.status === 'pending').length;
+                const completed = downloads.filter(d => d.status === 'completed').length;
+                const failed = downloads.filter(d => d.status === 'failed').length;
+
+                document.getElementById('totalDownloads').textContent = total;
+                document.getElementById('activeDownloads').textContent = active;
+                document.getElementById('completedDownloads').textContent = completed;
+                document.getElementById('failedDownloads').textContent = failed;
+            }
+
+            function updateDownloadsList(downloads) {
+                const container = document.getElementById('downloadsList');
+
+                if (downloads.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state">
+                            <h2>No Downloads</h2>
+                            <p>No downloads are currently in progress.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const html = downloads.map(download => {
+                    const progressClass = download.status === 'completed' ? 'completed' :
+                        download.status === 'failed' ? 'failed' : '';
+
+                    return `
+                        <div class="download-item">
+                            <div class="download-header">
+                                <h3 class="download-title">Chapter ${download.gallery_id}</h3>
+                                <span class="download-status status-${download.status}">${download.status}</span>
+                            </div>
+                            <div class="progress-container">
+                                <div class="progress-bar">
+                                    <div class="progress-fill ${progressClass}" style="width: ${download.progress_percentage}%"></div>
+                                </div>
+                                <div class="progress-info">
+                                    <span class="progress-text">
+                                        ${download.downloaded_images}/${download.total_images} images
+                                        ${download.failed_images > 0 ? `(${download.failed_images} failed)` : ''}
+                                    </span>
+                                    <span class="progress-percentage">${download.progress_percentage.toFixed(1)}%</span>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+                container.innerHTML = html;
+            }
+
+            function refreshDownloads() {
+                const btn = document.getElementById('refreshBtn');
+                btn.textContent = '⏳ Refreshing...';
+                btn.disabled = true;
+
+                fetchDownloads().finally(() => {
+                    btn.textContent = '🔄 Refresh';
+                    btn.disabled = false;
+                });
+            }
+
+            function toggleAutoRefresh() {
+                const checkbox = document.getElementById('autoRefresh');
+
+                if (checkbox.checked) {
+                    autoRefreshInterval = setInterval(fetchDownloads, 2000);
+                } else {
+                    if (autoRefreshInterval) {
+                        clearInterval(autoRefreshInterval);
+                        autoRefreshInterval = null;
+                    }
+                }
+            }
+
+            // Initialize
+            document.addEventListener('DOMContentLoaded', function() {
+                fetchDownloads();
+
+                // Set up auto-refresh
+                const autoRefreshCheckbox = document.getElementById('autoRefresh');
+                autoRefreshCheckbox.addEventListener('change', toggleAutoRefresh);
+
+                // Start auto-refresh if enabled
+                if (autoRefreshCheckbox.checked) {
+                    toggleAutoRefresh();
+                }
+            });
+
+            // Clean up interval when page is unloaded
+            window.addEventListener('beforeunload', function() {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                }
+            });
+        </script>
+    </body>
+</html>

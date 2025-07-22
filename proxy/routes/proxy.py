@@ -4,9 +4,10 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from quart import Blueprint, Response, request
+from quart import Blueprint, Response, render_template, request
 from quart.utils import run_sync
 
+from ..errors import NeedCSRF
 from ..modifiers import modify_html_content, modify_js_content
 from ..utils import Requests, ResourceCache
 
@@ -20,6 +21,7 @@ __all__ = ("register_routes",)
 
 bp = Blueprint("proxy", __name__)
 rs_cache = ResourceCache()
+requester = Requests()
 
 
 @bp.route("/<path:url>", methods=["GET", "POST"])
@@ -46,10 +48,11 @@ async def proxy(url: str):
             status=200,
         )
     data = await request.form if request.method == "POST" else None
+    need_url = "https://" + url
     r: RequestResponse = await run_sync(
-        lambda: Requests().request(
+        lambda: requester.request(
             request.method,
-            "https://" + url,
+            need_url,
             params=request.args,
             headers=dict(request.headers),
             allow_redirects=False,
@@ -63,6 +66,10 @@ async def proxy(url: str):
     headers.pop("Content-Encoding", None)
     headers.pop("Transfer-Encoding", None)
     headers.pop("Content-Length", None)
+    headers.pop("Content-Security-Policy", None)
+    headers.pop("X-Content-Security-Policy", None)
+    headers.pop("Remote-Addr", None)
+
     content_type = r.headers.get("Content-Type", "")
     if "text/html" in content_type:
         if "Location" in headers:
@@ -71,8 +78,8 @@ async def proxy(url: str):
                 f"/p/{parts.netloc}/{parts.path.lstrip('/')}{parts.query and '?' + parts.query or ''}{parts.fragment and '#' + parts.fragment or ''}"
             )
         parts = urlparse(r.url)
-        return Response(
-            modify_html_content(
+        try:
+            html_content = modify_html_content(
                 request_url=request.url,
                 page_url=r.url,
                 html_content=r.text,
@@ -81,10 +88,22 @@ async def proxy(url: str):
                 proxy_images=(
                     request.args.get("proxy_images", "false").lower() == "true"
                 ),
-            ),
+            )
+        except NeedCSRF as e:
+            html_content = await render_template(
+                "csrf.jinja2",
+                error_message=str(e),
+                redirect_url=request.url,
+                problem_url=need_url,
+                netloc=parts.netloc,
+            )
+
+        return Response(
+            html_content,
             headers=headers,
             status=r.status_code,
         )
+
     elif "application/javascript" in content_type:
         return modify_js_content(request.url, r.text)
 

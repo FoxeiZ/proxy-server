@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description"
+              content="CSRF Token Required - Complete verification">
+        <title>Verification Required</title>
+        <link rel="stylesheet"
+              href="{{ url_for('static', filename='nhentai/styles.css') }}">
+        <style>
+            /* CSRF Page Specific Styles */
+            .csrf-container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                box-shadow: var(--shadow);
+                padding: 40px;
+            }
+            
+            .error-icon {
+                text-align: center;
+                font-size: 64px;
+                margin-bottom: 20px;
+                color: #ffc107;
+            }
+            
+            .error-message {
+                background: #fff3cd;
+                border: 1px solid #ffeaa7;
+                color: #856404;
+                padding: 15px;
+                border-radius: 4px;
+                margin-bottom: 30px;
+                font-size: 14px;
+                word-break: break-word;
+            }
+            
+            @media (prefers-color-scheme: dark) {
+                .error-message {
+                    background: #2d2a1f;
+                    border-color: #4a4419;
+                    color: #d4b429;
+                }
+            }
+            
+            .instructions {
+                margin-bottom: 30px;
+            }
+            
+            .instructions h2 {
+                color: var(--text-primary);
+                margin-bottom: 20px;
+                font-size: 20px;
+            }
+            
+            .step {
+                display: flex;
+                align-items: flex-start;
+                margin-bottom: 20px;
+                padding: 15px;
+                background: var(--info-bg);
+                border-radius: 4px;
+                border-left: 4px solid var(--button-primary);
+            }
+            
+            .step-number {
+                background: var(--button-primary);
+                color: var(--header-text);
+                width: 24px;
+                height: 24px;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                font-weight: bold;
+                margin-right: 15px;
+                flex-shrink: 0;
+            }
+            
+            .step-content {
+                flex: 1;
+            }
+            
+            .step-title {
+                font-weight: bold;
+                color: var(--text-primary);
+                margin-bottom: 5px;
+            }
+            
+            .step-description {
+                color: var(--text-secondary);
+                font-size: 14px;
+                line-height: 1.5;
+            }
+            
+            .problem-url {
+                background: var(--card-bg);
+                border: 1px solid var(--border-color);
+                padding: 10px;
+                border-radius: 4px;
+                font-family: monospace;
+                font-size: 13px;
+                margin: 10px 0;
+                word-break: break-all;
+                color: var(--text-primary);
+            }
+            
+            .open-link-button {
+                background: var(--button-success);
+                color: var(--header-text);
+                padding: 10px 20px;
+                border: none;
+                border-radius: 4px;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 14px;
+                margin: 10px 0;
+                cursor: pointer;
+            }
+            
+            .open-link-button:hover {
+                background: var(--button-success-hover);
+            }
+            
+            .csrf-form {
+                background: var(--info-bg);
+                padding: 20px;
+                border-radius: 4px;
+                border: 1px solid var(--border-color);
+            }
+            
+            .form-group {
+                margin-bottom: 20px;
+            }
+            
+            .form-label {
+                display: block;
+                font-weight: bold;
+                color: var(--text-primary);
+                margin-bottom: 8px;
+                font-size: 14px;
+            }
+            
+            .form-input {
+                width: 100%;
+                padding: 12px;
+                border: 1px solid var(--border-color);
+                border-radius: 4px;
+                background: var(--card-bg);
+                color: var(--text-primary);
+                font-size: 14px;
+                font-family: monospace;
+                resize: vertical;
+                min-height: 50px;
+            }
+            
+            .form-input:focus {
+                outline: none;
+                border-color: var(--button-primary);
+                box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+            }
+            
+            .form-help {
+                font-size: 12px;
+                color: var(--text-secondary);
+                margin-top: 5px;
+                line-height: 1.4;
+            }
+            
+            .submit-button {
+                background: var(--button-primary);
+                color: var(--header-text);
+                padding: 12px 24px;
+                border: none;
+                border-radius: 4px;
+                font-size: 16px;
+                cursor: pointer;
+                width: 100%;
+                transition: background-color 0.3s ease;
+            }
+            
+            .submit-button:hover:not(:disabled) {
+                background: var(--button-primary-hover);
+            }
+            
+            .submit-button:disabled {
+                background: var(--text-secondary);
+                cursor: not-allowed;
+            }
+            
+            .status-message {
+                margin-top: 15px;
+                padding: 10px;
+                border-radius: 4px;
+                font-size: 14px;
+                text-align: center;
+                display: none;
+            }
+            
+            .status-success {
+                background: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            
+            .status-error {
+                background: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            
+            @media (prefers-color-scheme: dark) {
+                .status-success {
+                    background: #1e3d2a;
+                    color: #4fb3d9;
+                    border-color: #2d5a3d;
+                }
+                
+                .status-error {
+                    background: #3d1e1e;
+                    color: #f5c6cb;
+                    border-color: #5a2d2d;
+                }
+                
+                .form-input {
+                    background: var(--card-bg);
+                    color: var(--text-primary);
+                }
+            }
+            
+            .loading-spinner {
+                display: inline-block;
+                width: 16px;
+                height: 16px;
+                border: 2px solid transparent;
+                border-top: 2px solid currentColor;
+                border-radius: 50%;
+                animation: spin 1s linear infinite;
+                margin-right: 8px;
+            }
+            
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            
+            .status-message.status-show {
+                display: block;
+                margin-bottom: 20px;
+            }
+            
+            /* Responsive Design */
+            @media (max-width: 768px) {
+                .csrf-container {
+                    margin: 0;
+                    padding: 20px;
+                }
+                
+                .error-icon {
+                    font-size: 48px;
+                }
+                
+                .step {
+                    padding: 12px;
+                }
+                
+                .step-number {
+                    width: 20px;
+                    height: 20px;
+                    font-size: 11px;
+                    margin-right: 12px;
+                }
+                
+                .csrf-form {
+                    padding: 15px;
+                }
+            }
+            
+            @media (max-width: 480px) {
+                .csrf-container {
+                    padding: 15px;
+                }
+                
+                .step {
+                    flex-direction: column;
+                    align-items: flex-start;
+                }
+                
+                .step-number {
+                    margin-bottom: 10px;
+                    margin-right: 0;
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <button class="dark-mode-toggle"
+                onclick="toggleDarkMode()"
+                title="Toggle dark mode">🌙</button>
+        <div class="header">
+            <h1>Verification Required</h1>
+            <div class="subtitle">Complete security verification to continue</div>
+        </div>
+        <div class="csrf-container">
+            <div class="error-icon">🔒</div>
+            {% if error_message %}
+                <div class="error-message">
+                    <strong>Security Check Required:</strong> {{ error_message }}
+                </div>
+            {% endif %}
+            <div class="instructions">
+                <h2>Follow these steps to continue:</h2>
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <div class="step-title">Open the verification page</div>
+                        <div class="step-description">
+                            Click the button below to open the verification page in a new tab:
+                            <div class="problem-url">{{ problem_url }}</div>
+                            <a href="{{ problem_url }}" target="_blank" class="open-link-button">🔗 Open Verification Page</a>
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <div class="step-title">Complete the security challenge</div>
+                        <div class="step-description">
+                            On the verification page, complete any security challenges (CAPTCHA, etc.) that appear.
+                            This may include clicking checkboxes, selecting images, or solving puzzles.
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <div class="step-title">Copy all cookies</div>
+                        <div class="step-description">
+                            After completing the challenge, open your browser's Developer Tools (F12),
+                            go to the Application/Storage tab, find Cookies for the domain, and copy
+                            <strong>all cookies as a single string</strong>. You can do this by:
+                            <br>
+                            <br>
+                            <strong>Method 1:</strong> Right-click in the cookies area and select "Copy all as cURL" or "Copy all"
+                            <br>
+                            <strong>Method 2:</strong> Copy the cookie string from the Network tab's request headers (Cookie: header)
+                            <br>
+                            <strong>Method 3:</strong> Manually copy in format: <code>name1=value1; name2=value2; cf_clearance=...</code>
+                        </div>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <div class="step-title">Submit the cookie string below</div>
+                        <div class="step-description">
+                            Paste the complete cookie string in the form below and submit it.
+                            The system will automatically extract the cf_clearance token from it.
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <form id="csrfForm" class="csrf-form" method="post" action="/csrf">
+                {% if error_message %}<div class="status-message status-error status-show">❌ {{ error_message }}</div>{% endif %}
+                <div class="form-group">
+                    <label for="cf_clearance" class="form-label">Complete Cookie String:</label>
+                    <textarea id="cf_clearance"
+                              name="cf_clearance"
+                              class="form-input"
+                              rows="4"
+                              placeholder="Paste the complete cookie string here (e.g., name1=value1; name2=value2; cf_clearance=...)"
+                              required></textarea>
+                    <div class="form-help">
+                        Paste the entire cookie string from your browser. It should contain multiple cookies separated by semicolons,
+                        including the cf_clearance cookie. Example format:
+                        <br>
+                        <code>cookie1=value1; cookie2=value2; cf_clearance=abc123...</code>
+                    </div>
+                </div>
+                <input type="hidden" name="netloc" value="{{ netloc }}">
+                <input type="hidden" name="redirect_url" value="{{ redirect_url }}">
+                <input type="hidden" name="problem_url" value="{{ problem_url }}">
+                <button type="submit" class="submit-button">Submit Cookie String</button>
+            </form>
+        </div>
+        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
+        <script>
+            // Auto-focus the input field
+            document.addEventListener('DOMContentLoaded', function() {
+                document.getElementById('cf_clearance').focus();
+            });
+        </script>
+    </body>
+</html>
