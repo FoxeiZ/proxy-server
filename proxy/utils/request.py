@@ -1,9 +1,13 @@
+import json
 from http.cookies import SimpleCookie
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from cloudscraper import CloudScraper
+from requests.utils import cookiejar_from_dict
 
+from ..config import Config
 from ..singleton import Singleton
 
 __all__ = ("Requests",)
@@ -22,6 +26,11 @@ class Requests(Singleton, CloudScraper):
             debug=False,
             interpreter="js2py",
         )
+        cookies_path = Path(Config.cache_path) / "cookies.json"
+        if cookies_path.exists():
+            with cookies_path.open("r", encoding="utf-8") as f:
+                cookies_dict = json.load(f)
+            cookiejar_from_dict(cookies_dict, cookiejar=self.cookies, overwrite=True)
 
     def _clean_headers(self, url: str, headers: dict[str, Any]) -> None:
         """Remove headers that may cause issues with proxying."""
