@@ -446,9 +446,12 @@ def clean_title(manga_title):
     return edited_title
 
 
-def remove_special_characters(title: str) -> str:
-    """Remove special characters from the title."""
-    return re.sub(r"[.\,;:!?\-()]|[^\x00-\x7F]", "_", title).strip()
+def remove_special_characters(text):
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1F]', "", text)
+    # keep only Unicode letters, digits, spaces, and CJK characters
+    cleaned = re.sub(r"[^\w\s\u4e00-\u9fff\u3040-\u30ff]", "", cleaned)
+    # remove leading and trailing spaces and dots
+    return cleaned.rstrip(" .")
 
 
 def parse_manga_title(title: str) -> ParsedMangaTitle:
