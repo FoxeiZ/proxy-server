@@ -1,14 +1,10 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="description"
-              content="Download Manager - Monitor chapter downloads">
-        <title>Download Manager</title>
-        <link rel="stylesheet"
-              href="{{ url_for('static', filename='nhentai/styles.css') }}">
-        <style>
+{% extends "nhentai/base.jinja2" %}
+{% block title %}
+    Download Manager
+{% endblock title %}
+{% block styles %}
+    {{ super() }}
+    <style>
             .download-container {
                 max-width: 1000px;
                 margin: 0 auto;
@@ -256,55 +252,56 @@
                     grid-template-columns: 1fr;
                 }
             }
-        </style>
-    </head>
-    <body>
-        <button class="dark-mode-toggle"
-                onclick="toggleDarkMode()"
-                title="Toggle dark mode">🌙</button>
-        <div class="header">
-            <h1>Download Manager</h1>
-            <div class="subtitle">Monitor chapter download progress</div>
-        </div>
-        <div class="navigation-top">
-            <a href="/galleries" class="back-button">← Back to Galleries</a>
-            <button id="refreshBtn" class="refresh-button" onclick="refreshDownloads()">🔄 Refresh</button>
-        </div>
-        <div class="download-container">
-            <!-- Download Statistics -->
-            <div class="download-stats-container">
-                <div class="auto-refresh">
-                    <input type="checkbox" id="autoRefresh" checked>
-                    <label for="autoRefresh">Auto-refresh every 2 seconds</label>
-                </div>
-                <div class="download-stats" id="downloadStats">
-                    <div class="stat-card">
-                        <div class="stat-number" id="totalDownloads">0</div>
-                        <div class="stat-label">Total Downloads</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="activeDownloads">0</div>
-                        <div class="stat-label">Active</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="completedDownloads">0</div>
-                        <div class="stat-label">Completed</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-number" id="failedDownloads">0</div>
-                        <div class="stat-label">Failed</div>
-                    </div>
-                </div>
+    </style>
+{% endblock styles %}
+{% block content %}
+    <div class="header">
+        <h1>Download Manager</h1>
+        <div class="subtitle">Monitor chapter download progress</div>
+    </div>
+    <div class="navigation-top">
+        <a href="/galleries" class="back-button">← Back to Galleries</a>
+        <a href="#"
+           id="refreshBtn"
+           class="back-button"
+           onclick="refreshDownloads()">🔄 Refresh</a>
+    </div>
+    <div class="download-container">
+        <!-- Download Statistics -->
+        <div class="download-stats-container">
+            <div class="auto-refresh">
+                <input type="checkbox" id="autoRefresh" checked>
+                <label for="autoRefresh">Auto-refresh every 2 seconds</label>
             </div>
-            <!-- Downloads List -->
-            <div id="downloadsList">
-                <div class="empty-state">
-                    <h2>No Downloads</h2>
-                    <p>No downloads are currently in progress.</p>
+            <div class="download-stats" id="downloadStats">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalDownloads">0</div>
+                    <div class="stat-label">Total Downloads</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="activeDownloads">0</div>
+                    <div class="stat-label">Active</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="completedDownloads">0</div>
+                    <div class="stat-label">Completed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="failedDownloads">0</div>
+                    <div class="stat-label">Failed</div>
                 </div>
             </div>
         </div>
-        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
+        <!-- Downloads List -->
+        <div id="downloadsList">
+            <div class="empty-state">
+                <h2>No Downloads</h2>
+                <p>No downloads are currently in progress.</p>
+            </div>
+        </div>
+    </div>
+    {% block scripts %}
+        {{ super() }}
         <script>
             let autoRefreshInterval;
 
@@ -418,5 +415,5 @@
                 }
             });
         </script>
-    </body>
-</html>
+    {% endblock scripts %}
+{% endblock content %}

@@ -1,5 +1,3 @@
-# TODO: Add a download manager for progress tracking and management
-# TODO: Add float notification for download progress
 from __future__ import annotations
 
 import json
@@ -8,6 +6,7 @@ import re
 from typing import TYPE_CHECKING, List, Optional, cast
 
 from bs4 import BeautifulSoup, Tag
+from quart import url_for
 
 from ..downloader import DownloadPool
 from ..enums import FileStatus
@@ -155,7 +154,9 @@ def modify_chapter(
     if not isinstance(btn_container, Tag):
         raise TypeError("Expected btn_container to be a BeautifulSoup Tag")
 
-    soup.head.append(soup.new_tag("script", string=JS_MOD))  # type: ignore
+    soup.head.append(  # type: ignore
+        soup.new_tag("script", src=url_for("static", filename="nhentai/mod.js"))
+    )
 
     def create_download():
         _a = soup.new_tag(
@@ -185,13 +186,14 @@ def modify_chapter(
             "id": "add",
             "style": "min-width: unset; padding: 0 0.75rem",
             "href": "#",
+            "class": "btn btn-primary tooltip",
         }
         if file_status == FileStatus.CONVERTED:
             button_text = "Converted"
             button_icon = "fa fa-check"
             hint_text = "Go to the converted gallery"
-            attrs["class"] = "btn btn-primary tooltip"
-            attrs["href"] = f"/galleries/{gallery_id}"
+            attrs["href"] = f"/galleries/chapter/{gallery_id}"
+            attrs["rel"] = "noreferrer"
         elif file_status == FileStatus.COMPLETED:
             button_text = "Downloaded"
             button_icon = "fa fa-check"
@@ -206,7 +208,6 @@ def modify_chapter(
             button_text = "Add"
             button_icon = "fa fa-plus"
             hint_text = "Click to add to download queue"
-            attrs["class"] = "btn btn-primary tooltip"
             attrs["onclick"] = f"addGallery(event, {gallery_id});"
 
         _a = soup.new_tag("a", attrs=attrs)
@@ -345,6 +346,16 @@ def remove_ads(soup: BeautifulSoup) -> None:
             continue
         ad_div.decompose()
         logger.info("Removed advertisement section from the HTML content.")
+
+    for script in soup.find_all("script"):
+        if not isinstance(script, Tag):
+            continue
+        if script.string and "show_popunders: true" in script.string:
+            script.string = script.string.replace(
+                "show_popunders: true", "show_popunders: false"
+            )
+            logger.info("Disabled popunders in the script content.")
+            break
 
 
 @ModifyRule.add_js_rule(r"nhentai\.net/static/js/scripts.*\.js")

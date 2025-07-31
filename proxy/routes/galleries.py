@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from quart import Blueprint, render_template, request, send_file
+from quart import Blueprint, render_template, request
 from quart.utils import run_sync
 
 from ..config import Config
@@ -51,8 +51,20 @@ async def gallery_series(name: str):
     )
 
 
-@bp.route("chapter/<int:gallery_id>")
-async def gallery_detail(gallery_id: int):
+@bp.route("chapter/<int:gallery_id>/")
+async def chapter_detail(gallery_id: int):
+    """Gallery detail page."""
+    gallery = GalleryScanner.get_chapter_file(gallery_id)
+    if not gallery:
+        return "", 404
+    return await render_template(
+        "nhentai/chapter.jinja2",
+        gallery=gallery,
+    )
+
+
+@bp.route("chapter/<int:gallery_id>/read/<int:page>")
+async def chapter_read(gallery_id: int, page: int):
     """Gallery detail page."""
     gallery = GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
@@ -75,20 +87,6 @@ async def gallery_thumbnail(filename: str):
         return "", 500
 
 
-@bp.route("/styles.css")
-async def serve_styles():
-    """Serve the shared CSS file."""
-    return await send_file("templates/nhentai/styles.css", mimetype="text/css")
-
-
-@bp.route("/scripts.js")
-async def serve_scripts():
-    """Serve the shared JavaScript file."""
-    return await send_file(
-        "templates/nhentai/scripts.js", mimetype="application/javascript"
-    )
-
-
 @bp.route("/download-manager")
 async def gallery_download_manager():
     """Gallery download manager."""
@@ -98,7 +96,14 @@ async def gallery_download_manager():
 @bp.route("/download-manager/progress")
 async def gallery_download_progress():
     """Get the download progress."""
-    progress = DownloadPool().get_all_progress()
+    page = request.args.get("page", 1, type=int)
+    limit = request.args.get("limit", 10, type=int)
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 10
+
+    progress = DownloadPool().get_paginate_progress(page=page, limit=limit)
     json_progress = [
         {
             "gallery_id": p.gallery_id,
@@ -109,7 +114,7 @@ async def gallery_download_progress():
             "progress_percentage": p.progress_percentage,
             "is_complete": p.is_complete,
         }
-        for p in progress.values()
+        for p in progress
     ]
     return json_progress
 

@@ -1,50 +1,39 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <meta name="description" content="Series page for browsing chapters">
-        <title>{{ series[0].info.series if series else 'Series' }} - Chapters</title>
-        <link rel="stylesheet"
-              href="{{ url_for('static', filename='nhentai/styles.css') }}">
-    </head>
-    <body>
-        <button class="dark-mode-toggle"
-                onclick="toggleDarkMode()"
-                title="Toggle dark mode">🌙</button>
-        <div class="header">
-            <h1>{{ series[0].info.series if series else 'Unknown Series' }}</h1>
-            <div class="subtitle">{{ series | length }} chapter{{ 's' if series | length != 1 else '' }} available</div>
-        </div>
-        <div class="navigation-top">
-            <a href="/galleries" class="back-button">← Back to Galleries</a>
-        </div>
-        <div class="series-grid">
-            {% if series %}
-                {% set items_per_row = 5 %}
-                {% for row_start in range(0, series | length, items_per_row) %}
-                    {% set row_items = series[row_start:row_start + items_per_row] %}
-                    <div class="series-row">
-                        {% for chapter in row_items %}
-                            <a href="/galleries/chapter/{{ chapter.id }}" class="chapter-item">
-                                <img src="/galleries/thumbnail/{{ chapter.thumbnail.name }}"
-                                     alt="{{ chapter.info.title or 'Chapter ' + chapter.id|string }}">
-                                <h3>{{ chapter.info.title or 'Chapter ' + chapter.id|string }}</h3>
-                                <p>{{ chapter.info.number or 'N/A' }}</p>
-                                <div class="chapter-id">ID: {{ chapter.id }}</div>
-                            </a>
-                        {% endfor %}
-                    </div>
-                {% endfor %}
-            {% else %}
+{% extends "nhentai/base.jinja2" %}
+{% block title %}
+    {{ series[0].info.series if series else 'Series' }} - Chapters
+{% endblock title %}
+{% block content %}
+    <div class="header">
+        <h1>{{ series[0].info.series if series else 'Unknown Series' }}</h1>
+        <div class="subtitle">{{ series | length }} chapter{{ 's' if series | length != 1 else '' }} available</div>
+    </div>
+    <div class="navigation-top">
+        <a href="/galleries" class="back-button">← Back to Galleries</a>
+    </div>
+    <div class="series-grid">
+        {% if series %}
+            {% set items_per_row = 5 %}
+            {% for row_start in range(0, series | length, items_per_row) %}
+                {% set row_items = series[row_start:row_start + items_per_row] %}
                 <div class="series-row">
-                    <div class="empty-state">
-                        <h2>No Chapters Found</h2>
-                        <p>This series doesn't have any chapters available.</p>
-                    </div>
+                    {% for chapter in row_items %}
+                        <a href="/galleries/chapter/{{ chapter.id }}" class="chapter-item">
+                            <img src="/galleries/thumbnail/{{ chapter.thumbnail.name }}"
+                                 alt="{{ chapter.info.title or 'Chapter ' + chapter.id|string }}">
+                            <h3>{{ chapter.info.title or 'Chapter ' + chapter.id|string }}</h3>
+                            <p>{{ chapter.info.number or 'N/A' }}</p>
+                            <div class="chapter-id">ID: {{ chapter.id }}</div>
+                        </a>
+                    {% endfor %}
                 </div>
-            {% endif %}
-        </div>
-        <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
-    </body>
-</html>
+            {% endfor %}
+        {% else %}
+            <div class="series-row">
+                <div class="empty-state">
+                    <h2>No Chapters Found</h2>
+                    <p>This series doesn't have any chapters available.</p>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+{% endblock content %}

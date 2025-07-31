@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="description" content="">
+        <title>
+            {% block title %}
+                uwu
+            {% endblock title %}
+        </title>
+        {% block styles %}
+            <link rel="stylesheet"
+                  href="{{ url_for('static', filename='nhentai/styles.css') }}">
+            <style>
+                .floating-menu-toggle {
+                    position: fixed;
+                    bottom: 32px;
+                    right: 32px;
+                    z-index: 1001;
+                    background: var(--button-bg, #222);
+                    color: var(--header-text, #fff);
+                    border: none;
+                    border-radius: 50%;
+                    width: 48px;
+                    height: 48px;
+                    font-size: 1.5rem;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+                    cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .floating-menu-list {
+                    position: fixed;
+                    bottom: 88px;
+                    right: 32px;
+                    z-index: 1002;
+                    background: var(--card-bg, #fff);
+                    border: 1px solid var(--border-color, #ccc);
+                    border-radius: 8px;
+                    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+                    min-width: 180px;
+                    padding: 8px 0;
+                    display: none;
+                }
+                .floating-menu-list.show {
+                    display: flex;
+                    flex-direction: column;
+                }
+                .floating-menu-item {
+                    padding: 10px 20px;
+                    cursor: pointer;
+                    color: var(--text-primary, #222);
+                    background: none;
+                    border: none;
+                    width: 100%;
+                    text-align: left;
+                    text-decoration: none !important;
+                }
+            </style>
+        {% endblock styles %}
+    </head>
+    <body>
+        <button class="dark-mode-toggle"
+                onclick="toggleDarkMode()"
+                title="Toggle dark mode">🌙</button>
+        <button class="floating-menu-toggle"
+                id="floatingMenuToggle"
+                title="Open menu">☰</button>
+        <div class="floating-menu-list" id="floatingMenuList">
+            <a class="floating-menu-item" href="/galleries">/galleries</a>
+            <a class="floating-menu-item" href="/galleries/download-manager">/galleries/download-manager</a>
+        </div>
+        {% block content %}
+            <div class="container"></div>
+        {% endblock content %}
+        {% block scripts %}
+            <script src="{{ url_for('static', filename='nhentai/scripts.js') }}"></script>
+            <script>
+                const menuToggle = document.getElementById('floatingMenuToggle');
+                const menuList = document.getElementById('floatingMenuList');
+                menuToggle.addEventListener('click', function(e) {
+                    menuList.classList.toggle('show');
+                });
+                document.addEventListener('click', function(e) {
+                    if (!menuToggle.contains(e.target) && !menuList.contains(e.target)) {
+                        menuList.classList.remove('show');
+                    }
+                });
+            </script>
+        {% endblock scripts %}
+    </body>
+</html>
