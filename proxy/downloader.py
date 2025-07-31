@@ -31,6 +31,7 @@ logger = get_logger(__name__)
 class DownloadProgress:
     gallery_id: int
     total_images: int
+    gallery_title: str = ""
     downloaded_images: int = 0
     failed_images: int = 0
     status: DownloadStatus = DownloadStatus.PENDING
@@ -144,6 +145,7 @@ class DownloadPool(Singleton):
                 if r.status_code == 200:
                     with open(path, "wb") as f:
                         for chunk in r.iter_content(chunk_size=8192):
+                            # sleep(1)
                             if chunk:
                                 f.write(chunk)
                     logger.info("Successfully downloaded: %s", formatted_url)
@@ -240,6 +242,7 @@ class DownloadPool(Singleton):
         total_images = len(info["images"]["pages"])
         progress = DownloadProgress(
             gallery_id=gallery_id,
+            gallery_title=info["title"]["main_title"],
             total_images=total_images,
             status=DownloadStatus.PENDING,
         )
@@ -281,10 +284,26 @@ class DownloadPool(Singleton):
         with self._progress_lock:
             return self._progress.get(gallery_id)
 
-    def get_all_progress(self) -> dict[int, DownloadProgress]:
-        """Get download progress for all galleries."""
+    # def get_all_progress(self) -> dict[int, DownloadProgress]:
+    #     """Get download progress for all galleries."""
+    #     with self._progress_lock:
+    #         return self._progress
+
+    def get_paginate_progress(
+        self, page: int = 1, limit: int = 10
+    ) -> list[DownloadProgress]:
+        """Get paginated download progress."""
         with self._progress_lock:
-            return self._progress.copy()
+            all_progress = list(self._progress.values())
+            if not all_progress:
+                return []
+
+            start = (page - 1) * limit
+            if start >= len(all_progress):
+                return []
+            end = start + limit
+
+            return all_progress[start:end]
 
     def remove_progress(self, gallery_id: int):
         """Remove progress tracking for a gallery (useful for cleanup)."""

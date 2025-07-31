@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from difflib import SequenceMatcher
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, overload
+from typing import TYPE_CHECKING, Any, Callable, Self, TypeVar, overload
 
 from ..config import Config
 from ..enums import FileStatus
+from .logger import get_logger
 from .xml import ComicInfoDict, ComicInfoXML
 
 if TYPE_CHECKING:
@@ -36,6 +39,7 @@ __all__ = (
     "IMAGE_TYPE_MAPPING",
     "SUPPORTED_IMAGE_TYPES",
     "GalleryScanner",
+    "GalleryCbzFile",
 )
 
 IMAGE_TYPE_MAPPING = {
@@ -44,7 +48,18 @@ IMAGE_TYPE_MAPPING = {
     "w": "webp",
     "g": "gif",
 }
-SUPPORTED_IMAGE_TYPES = tuple(IMAGE_TYPE_MAPPING.values())
+SUPPORTED_IMAGE_TYPES = (
+    "jpg",
+    "png",
+    "webp",
+    "gif",
+)
+IMAGE_MIME_MAPPING = {
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
 
 
 @dataclass(eq=False, repr=False, slots=True)
@@ -53,13 +68,101 @@ class _GalleryPaginate:
 
     page: int
     limit: int
-    galleries: list[_GalleryCbzFile]
+    galleries: list[GalleryCbzFile]
     total: int
 
 
-class _GalleryCbzFile:
+class CbzPage:
+    def __init__(self, name: str, data: bytes):
+        p = Path(name)
+        self.page: int = int(p.stem) if p.stem.isdigit() else 0
+        self.mime = IMAGE_MIME_MAPPING.get(p.suffix, "application/octet-stream")
+        self.data: bytes = data
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __del__(self):
+        del self.data
+
+
+V = TypeVar("V")
+
+
+class AutoDiscard[V]:
+    _instances: set[Self] = set()
+    _lock = threading.Lock()
+    _thread_started = False
+    _logger = get_logger("AutoDiscard")
+
+    def __init__(self, target: Any, attr: str = "_pages", threshold: int = 600):
+        self._target = target
+        self._attr = attr
+        self._threshold = threshold
+        self._last_access = time.time()
+
+        with self._lock:
+            self._instances.add(self)
+            if not self._thread_started:
+                self._start_thread()
+
+    def get(self) -> V | None:
+        self._last_access = time.time()
+        return getattr(self._target, self._attr)
+
+    def set(self, value: V) -> None:
+        self._last_access = time.time()
+        setattr(self._target, self._attr, value)
+
+    def discard(self):
+        setattr(self._target, self._attr, None)
+
+    @classmethod
+    def _start_thread(cls):
+        if cls._thread_started:
+            return
+        cls._thread_started = True
+
+        def run():
+            cls._logger.info("AutoDiscard thread started.")
+            time.sleep(60)  # wait for the first run to avoid immediate discard
+            while True:
+                time.sleep(60)
+                total_instances = len(cls._instances)
+                if total_instances == 0:
+                    cls._logger.debug("No instances to discard.")
+                    continue
+
+                total_discarded = 0
+                now = time.time()
+                with cls._lock:
+                    for inst in list(cls._instances):
+                        if (
+                            getattr(inst._target, inst._attr, None) is not None
+                            and now - inst._last_access > inst._threshold
+                        ):
+                            inst.discard()
+                            total_discarded += 1
+
+                if total_discarded > 0:
+                    cls._logger.info(
+                        f"Discarded {total_discarded}/{total_instances} instances."
+                    )
+
+        t = threading.Thread(target=run, daemon=True, name="AutoDiscardThread")
+        t.start()
+
+    def __del__(self):
+        with self._lock:
+            self._instances.discard(self)
+
+
+class GalleryCbzFile:
     def __init__(self, path: Path | str, force_extract: bool = False):
         self.path: Path = Path(path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"File {self.path} does not exist.")
+
         if not self.path.stem.isdigit():
             raise ValueError(
                 f"Filename stem '{self.path.stem}' is not numeric and cannot be used as an ID."
@@ -70,9 +173,9 @@ class _GalleryCbzFile:
         self._thumbnail: Path | None = None
         self._info_file: Path = self.path.with_suffix(".info.json")
         self._info: ComicInfoDict | None = None
+        self._pages: list[CbzPage] | None = None
+        self._pages_discard: AutoDiscard[list[CbzPage]] | None = None
 
-        if not self.path.exists():
-            raise FileNotFoundError(f"File {self.path} does not exist.")
         if force_extract:
             self._extract()
 
@@ -99,6 +202,16 @@ class _GalleryCbzFile:
                 thumb = self._extract_thumbnail()
             self._thumbnail = thumb
         return self._thumbnail
+
+    @property
+    def pages(self) -> list[CbzPage]:
+        """Get the list of pages in the CBZ file."""
+        if self._pages is None or self._pages_discard is None:
+            self._pages = self._extract_pages()
+            self._pages_discard = AutoDiscard(self, "_pages", threshold=10)
+            self._pages_discard.set(self._pages)
+
+        return self._pages_discard.get()  # type: ignore[return-value]
 
     def _extract(self, only_if_missing: bool = True, force: bool = False) -> None:
         """Extract necessary files from the archive. Only called if all the files are missing."""
@@ -191,8 +304,28 @@ class _GalleryCbzFile:
             f"No ComicInfo.xml found in {self.path}. Please ensure the file is a valid CBZ archive."
         )
 
+    def _extract_pages(self) -> list[CbzPage]:
+        if self._pages is not None:
+            return self._pages
+
+        self._pages = []
+        with zipfile.ZipFile(self.path, "r") as zip_file:
+            namelist = zip_file.namelist()
+            namelist.remove("ComicInfo.xml")
+            pages = list(
+                CbzPage(n, zip_file.read(n))
+                for n in namelist
+                if n.endswith(SUPPORTED_IMAGE_TYPES)
+            )
+            self._pages = sorted(pages, key=lambda p: p.page)
+
+        return self._pages
+
+    def __len__(self) -> int:
+        return len(self.pages)
+
     def __eq__(self, value: object) -> bool:
-        if not isinstance(value, _GalleryCbzFile):
+        if not isinstance(value, GalleryCbzFile):
             return False
         return self.path == value.path
 
@@ -200,7 +333,7 @@ class _GalleryCbzFile:
         return hash(self.path)
 
     def __ne__(self, value: object) -> bool:
-        if not isinstance(value, _GalleryCbzFile):
+        if not isinstance(value, GalleryCbzFile):
             return True
         return self.path != value.path
 
@@ -208,7 +341,7 @@ class _GalleryCbzFile:
 @dataclass(eq=False, repr=False, slots=True)
 class _GalleryDir:
     path: Path
-    files: list[_GalleryCbzFile]
+    files: list[GalleryCbzFile]
 
     @property
     def count(self) -> int:
@@ -229,8 +362,8 @@ class _GalleryScanner:
         self.last_scanned: datetime | None = None
         self.path: Path = init_path if isinstance(init_path, Path) else Path(init_path)
 
-        self._gallery_dirs: dict[_Language, dict[_TitleDir, list[_GalleryCbzFile]]] = {}
-        self._chapter_files: dict[int, _GalleryCbzFile] = {}
+        self._gallery_dirs: dict[_Language, dict[_TitleDir, list[GalleryCbzFile]]] = {}
+        self._chapter_files: dict[int, GalleryCbzFile] = {}
 
     @property
     def should_scan(self) -> bool:
@@ -240,13 +373,13 @@ class _GalleryScanner:
         return (datetime.now() - self.last_scanned).total_seconds() > 3600
 
     @property
-    def gallery_dirs(self) -> dict[_Language, dict[_TitleDir, list[_GalleryCbzFile]]]:
+    def gallery_dirs(self) -> dict[_Language, dict[_TitleDir, list[GalleryCbzFile]]]:
         """Get the scanned directories."""
         if self.should_scan:
             self.scan(self.path)
         return self._gallery_dirs
 
-    def _scan_gallery_dir(self, path: str | Path) -> list[_GalleryCbzFile]:
+    def _scan_gallery_dir(self, path: str | Path) -> list[GalleryCbzFile]:
         path = Path(path)
         if not path.is_dir():
             return []
@@ -254,7 +387,7 @@ class _GalleryScanner:
         cbz_files = []
         for entry in os.scandir(path):
             if entry.is_file() and entry.name.endswith(".cbz"):
-                cbz = _GalleryCbzFile(entry.path)
+                cbz = GalleryCbzFile(entry.path)
                 self._chapter_files[cbz.id] = cbz
                 cbz_files.append(cbz)
         return cbz_files
@@ -412,11 +545,11 @@ class _GalleryScanner:
             total=total,
         )
 
-    def get_chapter_file(self, gallery_id: int) -> _GalleryCbzFile | None:
+    def get_chapter_file(self, gallery_id: int) -> GalleryCbzFile | None:
         """Get a chapter file by its ID."""
         return self._chapter_files.get(gallery_id)
 
-    def get_gallery_series(self, name: str) -> list[_GalleryCbzFile]:
+    def get_gallery_series(self, name: str) -> list[GalleryCbzFile]:
         """Get a list of gallery files that match the series name."""
         if not name:
             return []
