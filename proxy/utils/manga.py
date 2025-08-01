@@ -124,8 +124,10 @@ class AutoDiscard[T, V]:
     def get(self) -> V | None:
         with self._lock:
             if self not in self._instances:
-                self._logger.info(
-                    f"Instance {self}/{id(self)} not found in AutoDiscard instances."
+                self._logger.debug(
+                    "Instance %s/%d not found in AutoDiscard instances.",
+                    self,
+                    id(self),
                 )
                 self._instances.add(self)
 
@@ -172,7 +174,7 @@ class AutoDiscard[T, V]:
 
                 if total_discarded > 0:
                     cls._logger.info(
-                        f"Discarded {total_discarded}/{total_instances} instances."
+                        "Discarded %d/%d instances.", total_discarded, total_instances
                     )
 
         t = threading.Thread(target=run, daemon=True, name="AutoDiscardThread")
@@ -180,8 +182,10 @@ class AutoDiscard[T, V]:
 
     def __del__(self):
         self._logger.warning(
-            f"AutoDiscard instance {self}/{id(self)} is being deleted. "
-            "This should not happen, please check your code."
+            "AutoDiscard instance %s/%d is being deleted. "
+            "This should not happen, please check your code.",
+            self,
+            id(self),
         )
         with self._lock:
             self._instances.discard(self)
