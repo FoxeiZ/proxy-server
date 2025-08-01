@@ -1,6 +1,8 @@
 const Reader = (function () {
   const galleryId = window.GALLERY_ID;
   const totalPages = window.TOTAL_PAGES;
+  const nextChapterId = window.NEXT_CHAPTER;
+  const prevChapterId = window.PREV_CHAPTER;
   let currentPage = 1;
 
   function init() {
@@ -10,11 +12,14 @@ const Reader = (function () {
     }
 
     setupElements();
+    createNotification();
     setupEventListeners();
     loadPage(1);
   }
 
   let readerImage, currentPageInput, prevArea, nextArea, loadingSpinner;
+  let chapterNotification = null;
+  let notificationTimeout = null;
 
   function setupElements() {
     readerImage = document.getElementById("readerImage");
@@ -24,12 +29,56 @@ const Reader = (function () {
     loadingSpinner = document.getElementById("loadingSpinner");
   }
 
+  function createNotification() {
+    chapterNotification = document.createElement("div");
+    chapterNotification.className = "chapter-notification";
+    document.body.appendChild(chapterNotification);
+  }
+
+  function showNotification(message, duration = 3000) {
+    if (notificationTimeout) {
+      clearTimeout(notificationTimeout);
+    }
+
+    chapterNotification.innerHTML = message;
+    chapterNotification.classList.add("show");
+
+    notificationTimeout = setTimeout(() => {
+      chapterNotification.classList.remove("show");
+    }, duration);
+  }
+
+  function navigateToChapter(chapterId) {
+    window.location.href = `/galleries/chapter/${chapterId}/read`;
+  }
+
   function loadPage(pageNum) {
-    if (pageNum < 1) pageNum = 1;
-    if (pageNum > totalPages) pageNum = totalPages;
+    if (pageNum < 1) {
+      if (prevChapterId) {
+        navigateToChapter(prevChapterId);
+        return;
+      }
+      pageNum = 1;
+    } else if (pageNum > totalPages) {
+      if (nextChapterId) {
+        navigateToChapter(nextChapterId);
+        return;
+      }
+      pageNum = totalPages;
+    }
 
     currentPage = pageNum;
     currentPageInput.value = pageNum;
+
+    if (pageNum === 1 && prevChapterId) {
+      showNotification(
+        'This is the first page. <span class="action">Previous chapter available</span>'
+      );
+    } else if (pageNum === totalPages && nextChapterId) {
+      showNotification(
+        'This is the last page. <span class="action">Next chapter available</span>'
+      );
+    }
 
     prevArea.classList.toggle("disabled", pageNum <= 1);
     nextArea.classList.toggle("disabled", pageNum >= totalPages);

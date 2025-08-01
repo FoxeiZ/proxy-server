@@ -199,7 +199,7 @@ class DownloadPool(Singleton):
                     info["characters"].append("#end-field-characters")
 
                 xml_writer = XMLIOWriter()
-                xml_writer.from_gallery_info(info)
+                xml_writer.from_gallery_info(info, folder=img_dir.parent.name)
                 xml_writer.write_to_file(f)
 
             if remove_images:

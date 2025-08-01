@@ -40,6 +40,8 @@
         /* beautify ignore:start */
         window.GALLERY_ID = {{ gallery_id }};
         window.TOTAL_PAGES = {{ total_pages }};
+        window.NEXT_CHAPTER = {{ next_chapter or 'null' }};
+        window.PREV_CHAPTER = {{ prev_chapter or 'null' }};
         /* beautify ignore:end */
     </script>
     <script src="{{ url_for('static', filename='nhentai/reader.js') }}"></script>

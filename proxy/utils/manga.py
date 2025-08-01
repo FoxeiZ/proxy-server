@@ -573,6 +573,55 @@ class _GalleryScanner:
 
         return []
 
+    def _get_relative(
+        self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
+    ) -> tuple[list[GalleryCbzFile], int]:
+        if not gallery and not gallery_id:
+            raise ValueError
+        if gallery_id:
+            gallery = self.get_chapter_file(gallery_id)
+        if not gallery:
+            raise ValueError
+
+        series_name = (gallery.info.get("folder") or "").lower().strip()
+        if not series_name:
+            raise ValueError
+        series = self.get_gallery_series(series_name)
+        if not series or gallery not in series:
+            raise ValueError
+
+        series = sorted(series, key=lambda g: g.info.get("number") or g.id or 0)
+        current_index = series.index(gallery)
+        return series, current_index
+
+    def get_next_chapter(
+        self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
+    ) -> GalleryCbzFile | None:
+        """Get the next chapter file after the given gallery."""
+        try:
+            series, current_index = self._get_relative(
+                gallery=gallery, gallery_id=gallery_id
+            )
+            if current_index == -1 or current_index >= len(series) - 1:
+                return None
+            return series[current_index + 1]
+        except ValueError:
+            return None
+
+    def get_prev_chapter(
+        self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
+    ) -> GalleryCbzFile | None:
+        """Get the previous chapter file before the given gallery."""
+        try:
+            series, current_index = self._get_relative(
+                gallery=gallery, gallery_id=gallery_id
+            )
+            if current_index <= 0:
+                return None
+            return series[current_index - 1]
+        except ValueError:
+            return None
+
 
 GalleryScanner = _GalleryScanner(Config.gallery_path)
 

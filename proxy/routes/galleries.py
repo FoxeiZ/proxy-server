@@ -67,12 +67,17 @@ async def chapter_read(gallery_id: int):
     if not gallery:
         return "", 404
 
+    next_chapter = GalleryScanner.get_next_chapter(gallery=gallery)
+    prev_chapter = GalleryScanner.get_prev_chapter(gallery=gallery)
+
     await run_sync(lambda: gallery.pages)()  # trigger lazy loading
     return await render_template(
         "nhentai/reader.jinja2",
         info=gallery.info,
         gallery_id=gallery_id,
         total_pages=len(gallery),
+        next_chapter=next_chapter.id if next_chapter else None,
+        prev_chapter=prev_chapter.id if prev_chapter else None,
     )
 
 
