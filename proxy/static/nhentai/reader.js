@@ -1,7 +1,13 @@
+// @ts-check
+
 const Reader = (function () {
+  // @ts-ignore
   const galleryId = window.GALLERY_ID;
+  // @ts-ignore
   const totalPages = window.TOTAL_PAGES;
+  // @ts-ignore
   const nextChapterId = window.NEXT_CHAPTER;
+  // @ts-ignore
   const prevChapterId = window.PREV_CHAPTER;
   let currentPage = 1;
 
@@ -88,7 +94,7 @@ const Reader = (function () {
 
     const newImage = new Image();
     newImage.onload = function () {
-      readerImage.src = this.src;
+      readerImage.src = newImage.src;
       readerImage.classList.remove("loading");
       loadingSpinner.classList.remove("active");
     };
@@ -98,19 +104,6 @@ const Reader = (function () {
     };
 
     newImage.src = `/galleries/chapter/${galleryId}/read/${pageNum}`;
-  }
-
-  let touchStartX = 0;
-  let touchEndX = 0;
-
-  function handleSwipe() {
-    if (touchEndX < touchStartX - 50) {
-      loadPage(currentPage + 1);
-    }
-
-    if (touchEndX > touchStartX + 50) {
-      loadPage(currentPage - 1);
-    }
   }
 
   function setupEventListeners() {
@@ -127,17 +120,10 @@ const Reader = (function () {
 
     currentPageInput.addEventListener("change", () => {
       let pageNum = parseInt(currentPageInput.value);
-      if (isNaN(pageNum)) pageNum = 1;
+      if (Number.isNaN(pageNum)) {
+        pageNum = 1;
+      }
       loadPage(pageNum);
-    });
-
-    document.addEventListener("touchstart", (e) => {
-      touchStartX = e.changedTouches[0].screenX;
-    });
-
-    document.addEventListener("touchend", (e) => {
-      touchEndX = e.changedTouches[0].screenX;
-      handleSwipe();
     });
   }
 
