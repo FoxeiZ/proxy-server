@@ -10,15 +10,17 @@
 {% block content %}
     <div class="reader-container">
         <div class="reader-image-container">
-            <img id="readerImage"
-                 class="reader-image loading"
-                 src="/galleries/chapter/{{ gallery_id }}/read/1"
-                 alt="Page 1">
-            <div id="loadingSpinner" class="loading-spinner"></div>
-        </div>
-        <div class="reader-navigation">
-            <div class="nav-area prev-page" id="prevArea"></div>
-            <div class="nav-area next-page" id="nextArea"></div>
+            <div class="reader-image-wrapper">
+                <img id="readerImage"
+                     class="reader-image loading"
+                     src="/galleries/chapter/{{ gallery_id }}/read/1"
+                     alt="Page 1">
+                <div id="loadingSpinner" class="loading-spinner"></div>
+                <div class="reader-navigation">
+                    <div class="nav-area prev-page" id="prevArea"></div>
+                    <div class="nav-area next-page" id="nextArea"></div>
+                </div>
+            </div>
         </div>
         <div class="reader-footer">
             <div class="reader-title">{{ info.title or info.series or 'Gallery' }}</div>

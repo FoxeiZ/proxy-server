@@ -53,6 +53,7 @@
   align-items: center;
   max-width: 100%;
   min-height: 100vh;
+  position: relative;
 }
 
 .reader-image {
@@ -67,7 +68,7 @@
 }
 
 .reader-navigation {
-  position: fixed;
+  position: absolute;
   top: 0;
   left: 0;
   width: 100%;
@@ -81,18 +82,25 @@
   pointer-events: auto;
 }
 
+.reader-image-wrapper {
+  position: relative;
+}
+
 .prev-page,
 .next-page {
+  position: absolute;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
 .prev-page {
   width: 40%;
+  left: 0;
 }
 
 .next-page {
-  width: 60%;
+  width: 40%;
+  right: 0;
 }
 
 .reader-footer {
