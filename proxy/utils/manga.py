@@ -11,7 +11,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Self, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, Self, TypeVar, overload
 
 from ..config import Config
 from ..enums import FileStatus
@@ -86,17 +86,24 @@ class CbzPage:
         del self.data
 
 
+T = TypeVar("T")
 V = TypeVar("V")
 
 
-class AutoDiscard[V]:
+class AutoDiscard[T, V]:
     _instances: set[Self] = set()
     _lock = threading.Lock()
     _thread_started = False
+    _sleeping_time: int = 60
     _logger = get_logger("AutoDiscard")
 
-    def __init__(self, target: Any, attr: str = "_pages", threshold: int = 600):
-        self._target = target
+    def __init__(
+        self,
+        target: T,
+        attr: str = "_pages",
+        threshold: int = 600,
+    ):
+        self._target: T = target
         self._attr = attr
         self._threshold = threshold
         self._last_access = time.time()
@@ -106,7 +113,22 @@ class AutoDiscard[V]:
             if not self._thread_started:
                 self._start_thread()
 
+    @property
+    def threshold(self) -> int:
+        return self._threshold
+
+    @property
+    def last_access(self) -> float:
+        return self._last_access
+
     def get(self) -> V | None:
+        with self._lock:
+            if self not in self._instances:
+                self._logger.info(
+                    f"Instance {self}/{id(self)} not found in AutoDiscard instances."
+                )
+                self._instances.add(self)
+
         self._last_access = time.time()
         return getattr(self._target, self._attr)
 
@@ -118,19 +140,21 @@ class AutoDiscard[V]:
         setattr(self._target, self._attr, None)
 
     @classmethod
-    def _start_thread(cls):
+    def _start_thread(cls) -> None:
         if cls._thread_started:
             return
         cls._thread_started = True
 
         def run():
             cls._logger.info("AutoDiscard thread started.")
-            time.sleep(60)  # wait for the first run to avoid immediate discard
+            time.sleep(
+                cls._sleeping_time
+            )  # wait for the first run to avoid immediate discard
             while True:
-                time.sleep(60)
+                time.sleep(cls._sleeping_time)
                 total_instances = len(cls._instances)
                 if total_instances == 0:
-                    cls._logger.debug("No instances to discard.")
+                    cls._logger.info("No instances to discard.")
                     continue
 
                 total_discarded = 0
@@ -142,6 +166,8 @@ class AutoDiscard[V]:
                             and now - inst._last_access > inst._threshold
                         ):
                             inst.discard()
+                            # dereference to not keep track of the instance anymore
+                            cls._instances.discard(inst)
                             total_discarded += 1
 
                 if total_discarded > 0:
@@ -153,6 +179,10 @@ class AutoDiscard[V]:
         t.start()
 
     def __del__(self):
+        self._logger.warning(
+            f"AutoDiscard instance {self}/{id(self)} is being deleted. "
+            "This should not happen, please check your code."
+        )
         with self._lock:
             self._instances.discard(self)
 
@@ -174,7 +204,7 @@ class GalleryCbzFile:
         self._info_file: Path = self.path.with_suffix(".info.json")
         self._info: ComicInfoDict | None = None
         self._pages: list[CbzPage] | None = None
-        self._pages_discard: AutoDiscard[list[CbzPage]] | None = None
+        self._pages_discard: AutoDiscard[Self, list[CbzPage]] | None = None
 
         if force_extract:
             self._extract()
@@ -206,9 +236,11 @@ class GalleryCbzFile:
     @property
     def pages(self) -> list[CbzPage]:
         """Get the list of pages in the CBZ file."""
-        if self._pages is None or self._pages_discard is None:
+        if self._pages_discard is None:
+            self._pages_discard = AutoDiscard(self, "_pages", threshold=600)
+
+        if self._pages is None:
             self._pages = self._extract_pages()
-            self._pages_discard = AutoDiscard(self, "_pages")
             self._pages_discard.set(self._pages)
 
         return self._pages_discard.get()  # type: ignore[return-value]
