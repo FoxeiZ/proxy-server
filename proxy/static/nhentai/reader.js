@@ -14,19 +14,11 @@ const Reader = (function () {
     loadPage(1);
   }
 
-  let readerImage,
-    currentPageInput,
-    prevBtn,
-    nextBtn,
-    prevArea,
-    nextArea,
-    loadingSpinner;
+  let readerImage, currentPageInput, prevArea, nextArea, loadingSpinner;
 
   function setupElements() {
     readerImage = document.getElementById("readerImage");
     currentPageInput = document.getElementById("currentPage");
-    prevBtn = document.getElementById("prevBtn");
-    nextBtn = document.getElementById("nextBtn");
     prevArea = document.getElementById("prevArea");
     nextArea = document.getElementById("nextArea");
     loadingSpinner = document.getElementById("loadingSpinner");
@@ -39,8 +31,8 @@ const Reader = (function () {
     currentPage = pageNum;
     currentPageInput.value = pageNum;
 
-    prevBtn.disabled = pageNum <= 1;
-    nextBtn.disabled = pageNum >= totalPages;
+    prevArea.classList.toggle("disabled", pageNum <= 1);
+    nextArea.classList.toggle("disabled", pageNum >= totalPages);
 
     loadingSpinner.classList.add("active");
     readerImage.classList.add("loading");
@@ -73,9 +65,6 @@ const Reader = (function () {
   }
 
   function setupEventListeners() {
-    prevBtn.addEventListener("click", () => loadPage(currentPage - 1));
-    nextBtn.addEventListener("click", () => loadPage(currentPage + 1));
-
     prevArea.addEventListener("click", () => loadPage(currentPage - 1));
     nextArea.addEventListener("click", () => loadPage(currentPage + 1));
 

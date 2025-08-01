@@ -54,7 +54,7 @@
 body {
     font-family: Arial, sans-serif;
     background-color: var(--bg-color);
-    padding: 20px;
+    /* padding: 20px; */
     line-height: 1.6;
     color: var(--text-primary);
     transition: background-color 0.3s ease, color 0.3s ease;

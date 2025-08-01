@@ -21,20 +21,15 @@
             <div class="nav-area next-page" id="nextArea"></div>
         </div>
         <div class="reader-footer">
-            {# <a href="/galleries/chapter/{{ gallery_id }}" class="back-button">← Back to Gallery</a> #}
             <div class="reader-title">{{ info.title or info.series or 'Gallery' }}</div>
-            <div class="reader-controls">
-                <button id="prevBtn" class="control-button" title="Previous page">← Previous</button>
-                <div class="page-indicator">
-                    <input type="number"
-                           id="currentPage"
-                           class="page-input"
-                           min="1"
-                           max="{{ total_pages }}"
-                           value="1">
-                    <span>of {{ total_pages }}</span>
-                </div>
-                <button id="nextBtn" class="control-button" title="Next page">Next →</button>
+            <div class="page-indicator">
+                <input type="number"
+                       id="currentPage"
+                       class="page-input"
+                       min="1"
+                       max="{{ total_pages }}"
+                       value="1">
+                <span>of {{ total_pages }}</span>
             </div>
         </div>
     </div>
