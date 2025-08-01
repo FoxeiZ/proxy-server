@@ -518,6 +518,24 @@ body {
         font-size: 14px;
         padding: 10px 20px;
     }
+
+    .floating-menu-toggle {
+        width: 28px;
+        height: 28px;
+        bottom: 24px;
+        right: 24px;
+        font-size: 1rem;
+    }
+
+    .floating-menu-list {
+        min-width: 80px;
+        bottom: 64px;
+    }
+
+    .floating-menu-item {
+        padding: 8px 8px;
+        font-size: 0.8rem;
+    }
 }
 
 @media (max-width: 480px) {
