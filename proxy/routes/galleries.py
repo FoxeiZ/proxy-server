@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from quart import Blueprint, render_template, request
+from quart import Blueprint, Response, render_template, request
 from quart.utils import run_sync
 
 from ..config import Config
@@ -57,22 +57,40 @@ async def chapter_detail(gallery_id: int):
     gallery = GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
-    return await render_template(
-        "nhentai/chapter.jinja2",
-        gallery=gallery,
-    )
+    return await render_template("nhentai/chapter.jinja2", gallery=gallery)
 
 
-@bp.route("chapter/<int:gallery_id>/read/<int:page>")
-async def chapter_read(gallery_id: int, page: int):
+@bp.route("chapter/<int:gallery_id>/read")
+async def chapter_read(gallery_id: int):
     """Gallery detail page."""
     gallery = GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
+
+    await run_sync(lambda: gallery.pages)()  # trigger lazy loading
     return await render_template(
-        "nhentai/chapter.jinja2",
-        gallery=gallery,
+        "nhentai/reader.jinja2",
+        info=gallery.info,
+        gallery_id=gallery_id,
+        total_pages=len(gallery),
     )
+
+
+@bp.route("chapter/<int:gallery_id>/read/<int:page>")
+async def chapter_read_image(gallery_id: int, page: int):
+    """Serve gallery chapter image."""
+    gallery = GalleryScanner.get_chapter_file(gallery_id)
+    if not gallery:
+        return "", 404
+
+    if page < 1 or page > len(gallery):
+        return "", 404
+
+    try:
+        image = gallery.read_page(page)
+        return Response(content_type=image.mime, response=image.data)
+    except Exception:
+        return "", 500
 
 
 @bp.route("/thumbnail/<filename>")

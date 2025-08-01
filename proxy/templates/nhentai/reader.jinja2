@@ -1,0 +1,155 @@
+{% extends "nhentai/base.jinja2" %}
+{% block title %}
+    {{ info.title or info.series or 'Gallery' }} - Reader
+{% endblock title %}
+{% block styles %}
+    {{ super() }}
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='nhentai/reader.css') }}">
+{% endblock styles %}
+{% block content %}
+    <div class="reader-container">
+        <div class="reader-header">
+            <div class="reader-title">{{ info.title or info.series or 'Gallery' }}</div>
+            <div class="reader-controls">
+                <button id="prevBtn" class="control-button" title="Previous page">← Previous</button>
+                <div class="page-indicator">
+                    <input type="number"
+                           id="currentPage"
+                           class="page-input"
+                           min="1"
+                           max="{{ total_pages }}"
+                           value="1">
+                    <span>of {{ total_pages }}</span>
+                </div>
+                <button id="nextBtn" class="control-button" title="Next page">Next →</button>
+            </div>
+        </div>
+        <div class="reader-image-container">
+            <img id="readerImage"
+                 class="reader-image loading"
+                 src="/galleries/chapter/{{ gallery_id }}/read/1"
+                 alt="Page 1">
+            <div id="loadingSpinner" class="loading-spinner"></div>
+        </div>
+        <div class="reader-navigation">
+            <div class="nav-area prev-page" id="prevArea"></div>
+            <div class="nav-area next-page" id="nextArea"></div>
+        </div>
+        <div class="reader-footer">
+            <a href="/galleries/chapter/{{ gallery_id }}" class="back-button">← Back to Gallery</a>
+        </div>
+    </div>
+{% endblock content %}
+{% block scripts %}
+    {{ super() }}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            /* beautify ignore:start */
+            const galleryId = {{ gallery_id }};
+            const totalPages = {{ total_pages }};
+            let currentPage = 1;
+            /* beautify ignore:end */
+
+            const readerImage = document.getElementById('readerImage');
+            const currentPageInput = document.getElementById('currentPage');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            const prevArea = document.getElementById('prevArea');
+            const nextArea = document.getElementById('nextArea');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+
+            // Function to load image
+            function loadPage(pageNum) {
+                if (pageNum < 1) pageNum = 1;
+                if (pageNum > totalPages) pageNum = totalPages;
+
+                currentPage = pageNum;
+                currentPageInput.value = pageNum;
+
+                // Update button states
+                prevBtn.disabled = pageNum <= 1;
+                nextBtn.disabled = pageNum >= totalPages;
+
+                // Show loading spinner
+                loadingSpinner.classList.add('active');
+                readerImage.classList.add('loading');
+
+                // Preload the image
+                const newImage = new Image();
+                newImage.onload = function() {
+                    readerImage.src = this.src;
+                    readerImage.classList.remove('loading');
+                    loadingSpinner.classList.remove('active');
+                };
+                newImage.onerror = function() {
+                    loadingSpinner.classList.remove('active');
+                    alert('Failed to load image');
+                };
+
+                newImage.src = `/galleries/chapter/${galleryId}/read/${pageNum}`;
+            }
+
+            // Initialize with first page
+            loadPage(1);
+
+            // Set up event listeners
+            prevBtn.addEventListener('click', function() {
+                loadPage(currentPage - 1);
+            });
+
+            nextBtn.addEventListener('click', function() {
+                loadPage(currentPage + 1);
+            });
+
+            prevArea.addEventListener('click', function() {
+                loadPage(currentPage - 1);
+            });
+
+            nextArea.addEventListener('click', function() {
+                loadPage(currentPage + 1);
+            });
+
+            // Handle keyboard navigation
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'ArrowLeft') {
+                    loadPage(currentPage - 1);
+                } else if (e.key === 'ArrowRight') {
+                    loadPage(currentPage + 1);
+                }
+            });
+
+            // Handle page input
+            currentPageInput.addEventListener('change', function() {
+                let pageNum = parseInt(this.value);
+                if (isNaN(pageNum)) pageNum = 1;
+                loadPage(pageNum);
+            });
+
+            // Handle swipe for mobile
+            let touchStartX = 0;
+            let touchEndX = 0;
+
+            document.addEventListener('touchstart', function(e) {
+                touchStartX = e.changedTouches[0].screenX;
+            });
+
+            document.addEventListener('touchend', function(e) {
+                touchEndX = e.changedTouches[0].screenX;
+                handleSwipe();
+            });
+
+            function handleSwipe() {
+                if (touchEndX < touchStartX - 50) {
+                    // Swipe left, go to next page
+                    loadPage(currentPage + 1);
+                }
+
+                if (touchEndX > touchStartX + 50) {
+                    // Swipe right, go to previous page
+                    loadPage(currentPage - 1);
+                }
+            }
+        });
+    </script>
+{% endblock scripts %}

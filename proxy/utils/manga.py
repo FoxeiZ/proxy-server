@@ -213,6 +213,11 @@ class GalleryCbzFile:
 
         return self._pages_discard.get()  # type: ignore[return-value]
 
+    def read_page(self, page: int) -> CbzPage:
+        if not (1 <= page <= len(self.pages)):
+            raise ValueError(f"Page {page} is out of range for this CBZ file.")
+        return self.pages[page - 1]
+
     def _extract(self, only_if_missing: bool = True, force: bool = False) -> None:
         """Extract necessary files from the archive. Only called if all the files are missing."""
         if not self.path.exists():
@@ -378,6 +383,13 @@ class _GalleryScanner:
         if self.should_scan:
             self.scan(self.path)
         return self._gallery_dirs
+
+    @property
+    def chapter_files(self) -> dict[int, GalleryCbzFile]:
+        """Get the scanned chapter files, relative to gallery dir."""
+        if self.should_scan:
+            self.scan(self.path)
+        return self._chapter_files
 
     def _scan_gallery_dir(self, path: str | Path) -> list[GalleryCbzFile]:
         path = Path(path)
@@ -547,7 +559,7 @@ class _GalleryScanner:
 
     def get_chapter_file(self, gallery_id: int) -> GalleryCbzFile | None:
         """Get a chapter file by its ID."""
-        return self._chapter_files.get(gallery_id)
+        return self.chapter_files.get(gallery_id)
 
     def get_gallery_series(self, name: str) -> list[GalleryCbzFile]:
         """Get a list of gallery files that match the series name."""
