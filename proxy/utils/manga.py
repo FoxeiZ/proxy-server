@@ -467,6 +467,9 @@ class _GalleryScanner:
         if not chapter_files:
             self.remove_gallery_dir(lang, dir_name)
             return
+        chapter_files = sorted(
+            chapter_files, key=lambda g: g.info.get("number") or g.id or 0
+        )
         self._gallery_dirs[lang][dir_name] = chapter_files
 
         if sort:
@@ -626,7 +629,9 @@ class _GalleryScanner:
         if not series or gallery not in series:
             raise ValueError
 
-        series = sorted(series, key=lambda g: g.info.get("number") or g.id or 0)
+        # we already sorted when import, so we can just find the index
+        # and not worry about sorting again
+        # series = sorted(series, key=lambda g: g.info.get("number") or g.id or 0)
         current_index = series.index(gallery)
         return series, current_index
 
