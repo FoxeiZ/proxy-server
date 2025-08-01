@@ -208,7 +208,7 @@ class GalleryCbzFile:
         """Get the list of pages in the CBZ file."""
         if self._pages is None or self._pages_discard is None:
             self._pages = self._extract_pages()
-            self._pages_discard = AutoDiscard(self, "_pages", threshold=10)
+            self._pages_discard = AutoDiscard(self, "_pages")
             self._pages_discard.set(self._pages)
 
         return self._pages_discard.get()  # type: ignore[return-value]
