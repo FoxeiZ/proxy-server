@@ -95,7 +95,7 @@ class XMLWriter:
             elements = "".join(_build_element(element) for element in self.elements)
             return f"{header}<{self.root_tag}{root_attrs}>{elements}</{self.root_tag}>"
 
-    def from_gallery_info(self, gallery_info: NhentaiGallery):
+    def from_gallery_info(self, gallery_info: NhentaiGallery, folder: str):
         self.create_root(
             "ComicInfo",
             {
@@ -135,6 +135,7 @@ class XMLWriter:
         self.add_element(
             "BlackAndWhite", "No" if "full color" in gallery_info["tags"] else "Yes"
         )
+        self.add_element("Folder", folder)
 
 
 class XMLIOWriter(XMLWriter):
@@ -265,6 +266,7 @@ class ComicInfoDict(TypedDict, total=False):
     characters: list[str]
     series_group: list[str]
     web: str | None
+    folder: str
 
 
 class ComicInfoXML(XMLReader):
@@ -350,6 +352,14 @@ class ComicInfoXML(XMLReader):
         text = self.get_element_text("BlackAndWhite")
         return text.lower() == "yes" if text else True
 
+    @property
+    def folder(self) -> str:
+        """Get the folder name."""
+        folder = self.get_element_text("Folder")
+        if folder is None:
+            raise ValueError("Folder element is missing in the ComicInfo XML.")
+        return folder
+
     def to_dict(self) -> ComicInfoDict:
         return {
             "title": self.title,
@@ -365,4 +375,5 @@ class ComicInfoXML(XMLReader):
             "characters": self.characters,
             "series_group": self.series_group,
             "web": self.web,
+            "folder": self.folder,
         }
