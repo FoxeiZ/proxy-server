@@ -1,0 +1,9 @@
+*log*
+*.db
+*tmp*
+test*
+tasks/
+__pycache__/
+venv/
+!logger.py
+galleries/

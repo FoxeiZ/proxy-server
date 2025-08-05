@@ -1,0 +1,28 @@
+{
+    "python.analysis.typeCheckingMode": "standard",
+    "ruff.organizeImports": true,
+    "editor.codeActionsOnSave": {
+        "source.fixAll.ruff": "always",
+        "source.organizeImports.ruff": "always"
+    },
+    "files.eol": "\n",
+    "[html][django-html][handlebars][hbs][mustache][jinja][jinja-html][nj][njk][nunjucks][twig]": {
+        "editor.defaultFormatter": "monosans.djlint"
+    },
+    "files.associations": {
+        "*.html": "jinja-html"
+    },
+    "djlint.formatJs": true,
+    "djlint.ignore": [
+        "J018", // Internal links should use the {{ url_for() ... }} pattern. 
+        "H031", // Consider adding meta keywords
+        "H006", // Img tag should have height and width attributes
+    ],
+    "djlint.profile": "handlebars",
+    "[javascript]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+    "[css]": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode"
+    },
+}
