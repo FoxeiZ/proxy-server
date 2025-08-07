@@ -24,6 +24,17 @@ rs_cache = ResourceCache()
 requester = Requests()
 
 
+def arg_to_bool(arg: str | None = None, default: bool = False) -> bool:
+    """Convert a string argument to a boolean value."""
+    if arg is None:
+        return default
+    if arg.lower() in ("true", "1", "yes"):
+        return True
+    elif arg.lower() in ("false", "0", "no"):
+        return False
+    return default
+
+
 @bp.route("/<path:url>", methods=["GET", "POST"])
 async def proxy(url: str):
     """Fetches the specified URL and streams it out to the client.
@@ -40,6 +51,7 @@ async def proxy(url: str):
     #         % (url, url)
     #     )
     #     return redirect(urlunparse(parts._replace(path=parts.path + "/")))
+    proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
 
     if rc := rs_cache.get(url):
         return Response(
@@ -62,7 +74,7 @@ async def proxy(url: str):
         ),
     )()
 
-    headers = dict(r.headers)
+    headers = r.headers.copy()
     headers.pop("Content-Encoding", None)
     headers.pop("Transfer-Encoding", None)
     headers.pop("Content-Length", None)
@@ -70,13 +82,23 @@ async def proxy(url: str):
     headers.pop("X-Content-Security-Policy", None)
     headers.pop("Remote-Addr", None)
 
-    content_type = r.headers.get("Content-Type", "")
+    content_type = headers.get("Content-Type", "")
     if "text/html" in content_type:
         if "Location" in headers:
             parts = urlparse(headers["Location"])
+            if not parts.netloc:
+                request_parts = urlparse(request.url)
+                _split_paths = request_parts.path.split("/", 3)
+                if len(_split_paths) < 4:
+                    raise ValueError(
+                        "Invalid URL path for redirect: %s" % request_parts.path
+                    )  # raise error for now, could be handled better
+                parts = parts._replace(netloc=_split_paths[2])
+
             headers["Location"] = (
                 f"/p/{parts.netloc}/{parts.path.lstrip('/')}{parts.query and '?' + parts.query or ''}{parts.fragment and '#' + parts.fragment or ''}"
             )
+
         parts = urlparse(r.url)
         try:
             html_content = modify_html_content(
@@ -85,9 +107,7 @@ async def proxy(url: str):
                 html_content=r.text,
                 base_url=parts.netloc,
                 proxy_base=request.host_url,
-                proxy_images=(
-                    request.args.get("proxy_images", "false").lower() == "true"
-                ),
+                proxy_images=proxy_images,
             )
         except NeedCSRF as e:
             html_content = await render_template(
@@ -100,7 +120,7 @@ async def proxy(url: str):
 
         return Response(
             html_content,
-            headers=headers,
+            headers=dict(headers),
             status=r.status_code,
         )
 
@@ -121,7 +141,7 @@ async def proxy(url: str):
                 cache.write(chunk)
         cache.seek(0)
         if is_good:
-            rs_cache.put(url, (_headers, cache.getvalue()))
+            rs_cache.put(url, (dict(_headers), cache.getvalue()))
 
     return Response(
         generate_response(),

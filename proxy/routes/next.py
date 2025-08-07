@@ -21,6 +21,7 @@ def favicon():
 
 
 @bp.route("/<path:url>", methods=["GET", "POST"])
+@bp.route("/<path:url>/", methods=["GET", "POST"])
 async def wildcard(url: str):
     return Response(status=404)
 
