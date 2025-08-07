@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from typing import TYPE_CHECKING, List, Optional, cast
 
@@ -23,12 +22,6 @@ from .base import ModifyRule
 
 if TYPE_CHECKING:
     from .._types.nhentai import NhentaiGallery, NhentaiGalleryData
-
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-JS_MOD = ""
-with open(os.path.join(CURRENT_DIR, "n", "mod.js"), "r", encoding="utf-8") as f:
-    JS_MOD = f.read()
 
 
 logger = get_logger(__name__)

@@ -28,11 +28,11 @@ async def root(url: str):
     # This allows server-relative and protocol-relative URLs to work.
     referer = request.headers.get("referer")
     if not referer:
-        return redirect("/next/" + url.lstrip("/"))
+        return redirect(f"/next/{url.lstrip('/')}/")
 
     referer_parts = referer.split("/p/", maxsplit=1)
     if len(referer_parts) < 2:
-        return redirect("/next/" + url.lstrip("/"))
+        return redirect(f"/next/{url.lstrip('/')}/")
 
     url = url.lstrip("/").replace("..", "")  # sanitize
     netloc = referer_parts[-1].split("/")[0]
