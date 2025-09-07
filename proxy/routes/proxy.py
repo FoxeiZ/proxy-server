@@ -51,7 +51,7 @@ async def proxy(url: str):
     #         % (url, url)
     #     )
     #     return redirect(urlunparse(parts._replace(path=parts.path + "/")))
-    proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
+    is_proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
 
     if rc := rs_cache.get(url):
         return Response(
@@ -82,6 +82,15 @@ async def proxy(url: str):
     headers.pop("X-Content-Security-Policy", None)
     headers.pop("Remote-Addr", None)
 
+    # if "Set-Cookie" in headers:
+    #     cookie = headers["Set-Cookie"]
+    #     cookie = cookie.replace("SameSite=Lax", "SameSite=None; Secure")
+    #     regex = re.compile(r"[dD]omain=(.?\w+)+;")
+    #     for match in regex.finditer(cookie):
+    #         idx_end = match.end()
+    #         cookie = cookie[:idx_end] + " SameSite=None; Secure;" + cookie[idx_end:]
+    #     headers["Set-Cookie"] = cookie
+
     content_type = headers.get("Content-Type", "")
     if "text/html" in content_type:
         if "Location" in headers:
@@ -107,7 +116,7 @@ async def proxy(url: str):
                 html_content=r.text,
                 base_url=parts.netloc,
                 proxy_base=request.host_url,
-                proxy_images=proxy_images,
+                is_proxy_images=is_proxy_images,
             )
         except NeedCSRF as e:
             html_content = await render_template(
