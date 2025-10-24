@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import OrderedDict
 from typing import Callable
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
@@ -111,94 +111,67 @@ class ModifyRule(Singleton):
 
 
 def modify_html_content(
-    request_url: str,
     page_url: str,
     html_content: str,
-    base_url: str,
-    proxy_base: str,
     *,
     is_proxy_images: bool = False,
 ) -> str:
-    """Modify HTML content to inject custom elements and fix relative URLs"""
-    request_url_parts = urlparse(request_url)
-    page_url_parts = urlparse(page_url)
-
     try:
         soup = BeautifulSoup(html_content, "html.parser")
-        tags_attr = [
-            ("a", "href"),
-            ("img", "src"),
-            ("img", "data-src"),
-            ("link", "href"),
-            ("script", "src"),
-            ("form", "action"),
-        ]
-        # if is_proxy_images:
-        #     tags_attr.append(("img", "src"))
-        #     tags_attr.append(("img", "data-src"))
 
-        for tag_name, attr_name in tags_attr:
-            for tag in soup.find_all(tag_name, {attr_name: True}):
-                if not isinstance(tag, Tag):
-                    continue
-                url = tag[attr_name]
-                assert isinstance(url, str)
-                url_parts = urlparse(url)
-                if (
-                    not url
-                    or not isinstance(url, str)
-                    or url.startswith(
-                        (
-                            "javascript:",
-                            "data:",
-                            "mailto:",
-                            "tel:",
-                            "..",
-                        )
-                    )
-                ):
+        TAGS_TO_MODIFY = {
+            "a": ["href"],
+            "img": ["src", "data-src"],
+            "link": ["href"],
+            "script": ["src"],
+            "form": ["action"],
+        }
+
+        URL_PREFIXES_TO_SKIP = (
+            "#",
+            "magnet:",
+            "javascript:",
+            "data:",
+            "mailto:",
+            "tel:",
+        )
+
+        for tag in soup.find_all(TAGS_TO_MODIFY.keys()):
+            if not isinstance(tag, Tag):
+                raise ValueError("Unexpected tag type")
+
+            attributes = TAGS_TO_MODIFY.get(tag.name, [])
+            for attr_name in attributes:
+                if not tag.has_attr(attr_name):
                     continue
 
-                if url.startswith(("http://", "https://")):
-                    if tag_name == "img" and not is_proxy_images:
-                        continue
+                original_url = tag.get(attr_name)
+                if not isinstance(original_url, str) or not original_url.strip():
+                    continue
+                if original_url.startswith(URL_PREFIXES_TO_SKIP):
+                    continue
 
-                    tag[attr_name] = (
-                        f"{proxy_base}p/{url_parts.netloc}/{url_parts.path.lstrip('/')}"
-                        f"{url_parts.query and '?' + url_parts.query or ''}"
-                        f"{url_parts.fragment and '#' + url_parts.fragment or ''}"
-                    )
+                absolute_url = urljoin(page_url, original_url)
 
-                elif url.startswith("//"):
-                    if tag_name == "img" and not is_proxy_images:
-                        tag[attr_name] = f"{page_url_parts.scheme}:{url}"
-                    else:
-                        tag[attr_name] = f"/p/{url.lstrip('/')}"
+                # not proxied if is_proxy_images is False.
+                is_image_tag = tag.name == "img"
+                should_proxy = not (is_image_tag and not is_proxy_images)
 
-                elif not url.startswith("/"):
-                    if tag_name == "a":
-                        path_segments = page_url_parts.path.lstrip("/").split("/")
-                        if path_segments:
-                            path_segments.pop()
-                        tag[attr_name] = (
-                            f"/p/{page_url_parts.netloc}/{'/'.join(path_segments)}/{url.lstrip('/')}"
-                        )
-                    elif tag_name == "img" and not is_proxy_images:
-                        tag[attr_name] = (
-                            f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
-                        )
-                    else:
-                        tag[attr_name] = f"{request_url.rstrip('/')}/{url.lstrip('/')}"
+                if should_proxy:
+                    # make a root-relative proxied URL, e.g., /p/example.com/path/to/something
+                    url_parts = urlparse(absolute_url)
+                    proxied_url = f"/p/{url_parts.netloc}{url_parts.path}"
+                    if url_parts.query:
+                        proxied_url += f"?{url_parts.query}"
+                    if url_parts.fragment:
+                        proxied_url += f"#{url_parts.fragment}"
 
+                    tag[attr_name] = proxied_url
                 else:
-                    if tag_name == "img" and not is_proxy_images:
-                        tag[attr_name] = (
-                            f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
-                        )
-                    else:
-                        tag[attr_name] = f"/p/{base_url}/{url.lstrip('/')}"
+                    # use absolute URL to avoid breaking stuff
+                    tag[attr_name] = absolute_url
 
-                logger.info("Modified %s to: %s", url, tag[attr_name])
+                logger.info("Modified %s to: %s", original_url, tag[attr_name])
 
         return ModifyRule().modify_html(page_url, soup, html_content, is_proxy_images)
 

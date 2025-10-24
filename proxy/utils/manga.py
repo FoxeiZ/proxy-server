@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import threading
-import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,7 +13,7 @@ from typing import TYPE_CHECKING, Callable, Self, TypeVar, overload
 
 from ..config import Config
 from ..enums import FileStatus
-from .logger import get_logger
+from .cache import AutoDiscardObject
 from .xml import ComicInfoDict, ComicInfoXML
 
 if TYPE_CHECKING:
@@ -90,107 +88,6 @@ T = TypeVar("T")
 V = TypeVar("V")
 
 
-class AutoDiscard[T, V]:
-    _instances: set[Self] = set()
-    _lock = threading.Lock()
-    _thread_started = False
-    _sleeping_time: int = 60
-    _logger = get_logger("AutoDiscard")
-
-    def __init__(
-        self,
-        target: T,
-        attr: str = "_pages",
-        threshold: int = 600,
-    ):
-        self._target: T = target
-        self._attr = attr
-        self._threshold = threshold
-        self._last_access = time.time()
-
-        with self._lock:
-            self._instances.add(self)
-            if not self._thread_started:
-                self._start_thread()
-
-    @property
-    def threshold(self) -> int:
-        return self._threshold
-
-    @property
-    def last_access(self) -> float:
-        return self._last_access
-
-    def get(self) -> V | None:
-        with self._lock:
-            if self not in self._instances:
-                self._logger.debug(
-                    "Instance %s/%d not found in AutoDiscard instances.",
-                    self,
-                    id(self),
-                )
-                self._instances.add(self)
-
-        self._last_access = time.time()
-        return getattr(self._target, self._attr)
-
-    def set(self, value: V) -> None:
-        self._last_access = time.time()
-        setattr(self._target, self._attr, value)
-
-    def discard(self):
-        setattr(self._target, self._attr, None)
-
-    @classmethod
-    def _start_thread(cls) -> None:
-        if cls._thread_started:
-            return
-        cls._thread_started = True
-
-        def run():
-            cls._logger.info("AutoDiscard thread started.")
-            time.sleep(
-                cls._sleeping_time
-            )  # wait for the first run to avoid immediate discard
-            while True:
-                time.sleep(cls._sleeping_time)
-                total_instances = len(cls._instances)
-                if total_instances == 0:
-                    cls._logger.info("No instances to discard.")
-                    continue
-
-                total_discarded = 0
-                now = time.time()
-                with cls._lock:
-                    for inst in list(cls._instances):
-                        if (
-                            getattr(inst._target, inst._attr, None) is not None
-                            and now - inst._last_access > inst._threshold
-                        ):
-                            inst.discard()
-                            # dereference to not keep track of the instance anymore
-                            cls._instances.discard(inst)
-                            total_discarded += 1
-
-                if total_discarded > 0:
-                    cls._logger.info(
-                        "Discarded %d/%d instances.", total_discarded, total_instances
-                    )
-
-        t = threading.Thread(target=run, daemon=True, name="AutoDiscardThread")
-        t.start()
-
-    def __del__(self):
-        self._logger.warning(
-            "AutoDiscard instance %s/%d is being deleted. "
-            "This should not happen, please check your code.",
-            self,
-            id(self),
-        )
-        with self._lock:
-            self._instances.discard(self)
-
-
 class GalleryCbzFile:
     def __init__(self, path: Path | str, force_extract: bool = False):
         self.path: Path = Path(path)
@@ -208,7 +105,7 @@ class GalleryCbzFile:
         self._info_file: Path = self.path.with_suffix(".info.json")
         self._info: ComicInfoDict | None = None
         self._pages: list[CbzPage] | None = None
-        self._pages_discard: AutoDiscard[Self, list[CbzPage]] | None = None
+        self._pages_discard: AutoDiscardObject[Self, list[CbzPage]] | None = None
 
         if force_extract:
             self._extract()
@@ -241,7 +138,9 @@ class GalleryCbzFile:
     def pages(self) -> list[CbzPage]:
         """Get the list of pages in the CBZ file."""
         if self._pages_discard is None:
-            self._pages_discard = AutoDiscard(self, "_pages", threshold=600)
+            self._pages_discard = AutoDiscardObject(
+                self, "_pages", threshold=600, also_discard=["_pages_discard"]
+            )
 
         if self._pages is None:
             self._pages = self._extract_pages()

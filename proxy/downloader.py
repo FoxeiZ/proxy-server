@@ -13,11 +13,11 @@ from .singleton import Singleton
 from .utils import (
     IMAGE_TYPE_MAPPING,
     SUPPORTED_IMAGE_TYPES,
-    Requests,
     check_file_status_gallery,
     get_logger,
     make_gallery_path,
 )
+from .utils.request import SessionStore
 from .utils.xml import XMLIOWriter
 
 if TYPE_CHECKING:
@@ -53,11 +53,12 @@ class DownloadPool(Singleton):
     def __init__(self, max_workers: int = 5):
         super().__init__()
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
-        self._requester = Requests()
         self._progress: dict[int, DownloadProgress] = dict()
         self._progress_lock = Lock()
 
-    def _download(self, progress: DownloadProgress, info: "NhentaiGallery") -> None:
+    def _download(
+        self, progress: DownloadProgress, info: "NhentaiGallery", uuid4: str
+    ) -> None:
         """Download images for the given gallery information.
 
         :return: True if download was successful, False if stopped.
@@ -96,6 +97,7 @@ class DownloadPool(Singleton):
                 self._download_image(
                     f"https://i{{idx_server}}.nhentai.net/galleries/{info['media_id']}/{img_idx}.{image_type}",
                     gallery_path / f"{img_idx}.{image_type}",
+                    uuid4,
                 )
                 self._on_download_image_complete(gallery_id)
             except Exception as e:
@@ -132,7 +134,7 @@ class DownloadPool(Singleton):
                     else:
                         progress.status = DownloadStatus.MISSING
 
-    def _download_image(self, url: str, path: Path):
+    def _download_image(self, url: str, path: Path, uuid4: str):
         if path.exists():
             logger.info("Image already exists: %s", path)
             return
@@ -141,7 +143,11 @@ class DownloadPool(Singleton):
             formatted_url = url.format(idx_server=idx_server)
             logger.info("Downloading image from %s to %s", formatted_url, path)
             try:
-                r = self._requester.get(formatted_url, stream=True, timeout=30)
+                r = (
+                    SessionStore()
+                    .get(uuid4)
+                    .get(formatted_url, stream=True, timeout=30)
+                )
                 if r.status_code == 200:
                     with open(path, "wb") as f:
                         for chunk in r.iter_content(chunk_size=8192):
@@ -211,7 +217,7 @@ class DownloadPool(Singleton):
 
         scan_callback()
 
-    def add(self, info: "NhentaiGallery"):
+    def add(self, info: "NhentaiGallery", uuid4: str):
         """Submit a download task for the given gallery information."""
         gallery_id = info["id"]
 
@@ -246,7 +252,7 @@ class DownloadPool(Singleton):
             total_images=total_images,
             status=DownloadStatus.PENDING,
         )
-        fut = self._pool.submit(self._download, progress, info)
+        fut = self._pool.submit(self._download, progress, info, uuid4)
         fut.add_done_callback(
             lambda _, info=info: self._pool.submit(self.save_cbz, info)
             if progress.status == DownloadStatus.COMPLETED

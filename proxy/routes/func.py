@@ -8,7 +8,7 @@ from quart.utils import run_sync
 from ..downloader import DownloadPool
 from ..enums import FileStatus
 from ..modifiers.nhentai import parse_chapter
-from ..utils import GalleryInfoCache, Requests, check_file_status_gallery
+from ..utils import CFSession, GalleryInfoCache, check_file_status_gallery
 
 if TYPE_CHECKING:
     from quart import Quart
@@ -29,7 +29,7 @@ async def add(_id: int):
 
     info = gallery_info_cache.get(_id)
     if not info:
-        r = await run_sync(lambda: Requests().get(f"https://nhentai.net/g/{_id}"))()
+        r = await run_sync(lambda: CFSession().get(f"https://nhentai.net/g/{_id}"))()
         if r.status_code != 200:
             return {"error": "Gallery not found"}, 404
         html_content = r.text

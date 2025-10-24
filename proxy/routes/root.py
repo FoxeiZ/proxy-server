@@ -5,11 +5,11 @@ from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from quart import Blueprint, Response, redirect, render_template, request
+from quart import Blueprint, Response, redirect, render_template, request, session
 from requests.utils import dict_from_cookiejar
 
 from ..config import Config
-from ..utils import Requests
+from ..utils import SessionStore
 
 if TYPE_CHECKING:
     from quart import Quart
@@ -62,6 +62,7 @@ async def csrf():
     cookie_string = form.get("cf_clearance", "")
     netloc = form.get("netloc", "")
     redirect_url = form.get("redirect_url", "")
+
     if not cookie_string or not netloc:
         return Response("Cookie string and netloc are required", status=400)
 
@@ -78,18 +79,29 @@ async def csrf():
             f"/csrf?error_message=cf_clearance cookie not found in the provided cookies&redirect_url={redirect_url}&problem_url={form.get('problem_url', '')}&netloc={netloc}"
         )
 
-    cookies = Requests().cookies
+    uuid4 = session.get("session_id")
+    if not uuid4 or not isinstance(uuid4, str):
+        return redirect(
+            f"/csrf?error_message=Invalid session ID&redirect_url={redirect_url}&problem_url={form.get('problem_url', '')}&netloc={netloc}"
+        )
+
+    cookies = SessionStore().get(uuid4).cookies
     cookies.set("cf_clearance", simple_cookie["cf_clearance"].value, domain=netloc)
     for key in ("csrftoken", "sessionid", "session-affinity"):
         if key in simple_cookie:
             cookies.set(key, simple_cookie[key].value, domain=netloc)
 
     cookies_dict = dict_from_cookiejar(cookies)
-    (Path(Config.cache_path) / "cookies.json").write_text(
+    (Path(Config.cache_path) / f"cookies_{uuid4}.json").write_text(
         json.dumps(cookies_dict), encoding="utf-8"
     )
 
     return redirect(redirect_url)
+
+
+@bp.route("/test", methods=["GET"])
+async def test():
+    return await render_template("test/test.jinja2")
 
 
 def register_routes(app: Quart):

@@ -6,7 +6,13 @@ from .routes import register_all_routes
 def create_app() -> Quart:
     app = Quart(__name__, template_folder="templates", static_folder="static")
     app.secret_key = "huhu"
-    app.config["TEMPLATES_AUTO_RELOAD"] = True
+    app.config.update(
+        TEMPLATES_AUTO_RELOAD=True,
+        SESSION_COOKIE_SAMESITE="None",
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=False,
+    )
+
     register_all_routes(app)
 
     if app.debug:

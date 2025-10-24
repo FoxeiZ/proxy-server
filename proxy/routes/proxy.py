@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import uuid
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from quart import Blueprint, Response, render_template, request
+import requests
+from quart import Blueprint, Response, g, render_template, request, session
 from quart.utils import run_sync
 
 from ..errors import NeedCSRF
 from ..modifiers import modify_html_content, modify_js_content
-from ..utils import Requests, ResourceCache
+from ..utils import CFSession, SessionStore
 
 if TYPE_CHECKING:
     from quart import Quart
@@ -20,8 +22,6 @@ __all__ = ("register_routes",)
 
 
 bp = Blueprint("proxy", __name__)
-rs_cache = ResourceCache()
-requester = Requests()
 
 
 def arg_to_bool(arg: str | None = None, default: bool = False) -> bool:
@@ -35,44 +35,68 @@ def arg_to_bool(arg: str | None = None, default: bool = False) -> bool:
     return default
 
 
+@bp.before_request
+def before_request():
+    session_id = session.get("session_id") or str(uuid.uuid4())
+    print(session_id)
+    g.session = SessionStore().get(session_id)
+
+
+# enforce session creation
+def get_current_session() -> CFSession:
+    return g.session
+
+
+@bp.after_request
+async def after_request(response: Response):
+    session["session_id"] = get_current_session().session_id
+    return response
+
+
 @bp.route("/<path:url>", methods=["GET", "POST"])
 async def proxy(url: str):
     """Fetches the specified URL and streams it out to the client.
     If the request was referred by the proxy itself (e.g. this is an image fetch
     for a previously proxied HTML page), then the original Referer is passed."""
-    # Check if url to proxy has host only, and redirect with trailing slash
-    # (path component) to avoid breakage for downstream apps attempting base
-    # path detection
-    # url_parts = urlparse("%s://%s" % (request.scheme, url))
-    # if url_parts.path == "":
-    #     parts = urlparse(request.url)
-    #     logger.warning(
-    #         "Proxy request without a path was sent, redirecting assuming '/': %s -> %s/"
-    #         % (url, url)
-    #     )
-    #     return redirect(urlunparse(parts._replace(path=parts.path + "/")))
     is_proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
 
-    if rc := rs_cache.get(url):
+    current_session = get_current_session()
+    if rc := current_session.resource_cache.get(url):
         return Response(
             rc[1],
             headers=rc[0],
             status=200,
         )
+
     data = await request.form if request.method == "POST" else None
-    need_url = "https://" + url
-    r: RequestResponse = await run_sync(
-        lambda: requester.request(
-            request.method,
-            need_url,
-            params=request.args,
-            headers=dict(request.headers),
-            allow_redirects=False,
-            data=data,
-            timeout=10,
-            stream=True,
-        ),
-    )()
+    try:
+        need_url = "https://" + url
+        r: RequestResponse = await run_sync(
+            lambda: current_session.request(
+                request.method,
+                need_url,
+                params=request.args,
+                headers=dict(request.headers),
+                allow_redirects=False,
+                data=data,
+                timeout=10,
+                stream=True,
+            ),
+        )()
+    except requests.RequestException:
+        need_url = "http://" + url
+        r: RequestResponse = await run_sync(
+            lambda: current_session.request(
+                request.method,
+                need_url,
+                params=request.args,
+                headers=dict(request.headers),
+                allow_redirects=False,
+                data=data,
+                timeout=10,
+                stream=True,
+            ),
+        )()
 
     headers = r.headers.copy()
     headers.pop("Content-Encoding", None)
@@ -111,11 +135,8 @@ async def proxy(url: str):
         parts = urlparse(r.url)
         try:
             html_content = modify_html_content(
-                request_url=request.url,
                 page_url=r.url,
                 html_content=r.text,
-                base_url=parts.netloc,
-                proxy_base=request.host_url,
                 is_proxy_images=is_proxy_images,
             )
         except NeedCSRF as e:
@@ -150,7 +171,7 @@ async def proxy(url: str):
                 cache.write(chunk)
         cache.seek(0)
         if is_good:
-            rs_cache.put(url, (dict(_headers), cache.getvalue()))
+            current_session.resource_cache.put(url, (dict(_headers), cache.getvalue()))
 
     return Response(
         generate_response(),
