@@ -47,7 +47,7 @@ def parse_tags_from_html(html: str) -> List[str]:
         return tags
 
     except Exception as e:
-        print(f"Error parsing tags from HTML: {e}")
+        logger.error("error parsing tags from HTML: %s", e)
         return []
 
 
@@ -56,13 +56,18 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
     pattern = re.compile(r"window\._gallery = JSON\.parse\(\"([^\"]+)\"\);")
     match = pattern.search(html)
     if not match:
+        logger.debug("no gallery JSON data found in HTML content")
         return None
 
     json_string = match.group(1)
-    json_string = json_string.encode().decode("unicode_escape")
-    gallery_data: NhentaiGalleryData = json.loads(json_string)
+    try:
+        json_string = json_string.encode().decode("unicode_escape")
+        gallery_data: NhentaiGalleryData = json.loads(json_string)
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        logger.error("failed to parse gallery JSON data: %s", e)
+        return None
 
-    # Extract and clean the title string
+    # extract and clean the title string
     parsed_cleaned_title = clean_and_parse_title(
         gallery_data["title"].get("english", "")
         or gallery_data["title"].get("japanese", "")
@@ -99,7 +104,9 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         elif tag["type"] == "character":
             characters.extend(split_and_clean(tag["name"]))
         else:
-            logger.warning(f"Unknown tag type: {tag['type']} with name: {tag['name']}")
+            logger.warning(
+                "unknown tag type: %s with name: %s", tag["type"], tag["name"]
+            )
 
     processed_gallery: NhentaiGallery = {
         "id": gallery_data["id"],
@@ -128,15 +135,16 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
 def modify_chapter(
     soup: BeautifulSoup, html_content: str, *, proxy_images: bool = False
 ) -> None:
-    gallery_id_h3 = soup.find("h3", id="gallery_id")
-    if not gallery_id_h3:
-        logger.warning("No gallery ID found in the HTML content.")
+    """Modify nhentai chapter pages to add download functionality."""
+    gallery_id_element = soup.find("h3", id="gallery_id")
+    if not gallery_id_element:
+        logger.warning("no gallery ID found in the HTML content")
         return
-    gallery_id = gallery_id_h3.text.strip().lstrip("#")
+    gallery_id = gallery_id_element.text.strip().lstrip("#")
 
     gallery_data = parse_chapter(html_content)
     if not gallery_data:
-        logger.warning("No gallery data found in the HTML content.")
+        logger.warning("no gallery data found in the HTML content")
         return
     GalleryInfoCache().put(gallery_data["id"], gallery_data)
 

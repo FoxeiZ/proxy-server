@@ -50,33 +50,30 @@ class DownloadProgress:
 class DownloadPool(Singleton):
     """A pool for managing download tasks."""
 
-    def __init__(self, max_workers: int = 5):
+    def __init__(self, max_workers: int = 5) -> None:
         super().__init__()
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
         self._requester = Requests()
-        self._progress: dict[int, DownloadProgress] = dict()
+        self._progress: dict[int, DownloadProgress] = {}
         self._progress_lock = Lock()
 
     def _download(self, progress: DownloadProgress, info: "NhentaiGallery") -> None:
-        """Download images for the given gallery information.
-
-        :return: True if download was successful, False if stopped.
-        """
+        """Download images for the given gallery information."""
         gallery_title = info["title"]["main_title"]
         gallery_id = info["id"]
         gallery_language = info["language"]
+
         if not gallery_title or not gallery_id or not gallery_language:
             logger.error(
-                "Invalid gallery information: title=%s, id=%s, language=%s",
+                "invalid gallery information: title=%s, id=%s, language=%s",
                 gallery_title,
                 gallery_id,
                 gallery_language,
             )
             return
-        # gallery_number =
 
         logger.info(
-            "Downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
+            "downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
         )
         progress.status = DownloadStatus.DOWNLOADING
 
