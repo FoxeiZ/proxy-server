@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import re
 from collections import OrderedDict
-from typing import Callable
+from typing import Callable, Protocol
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
+from quart import url_for
 
 from ..errors import NeedToHandle
 from ..singleton import Singleton
@@ -17,15 +18,23 @@ __all__ = ("ModifyRule", "modify_html_content", "modify_js_content")
 logger = get_logger(__name__)
 
 
+class HtmlModifierProtocol(Protocol):
+    def __call__(
+        self,
+        soup: BeautifulSoup,
+        html_content: str,
+        /,
+        *,
+        proxy_images: bool = False,
+    ) -> None: ...
+
+
 class ModifyRule(Singleton):
     def __init__(self):
         super().__init__()
         self.html_modifiers: OrderedDict[
             str,
-            Callable[
-                [BeautifulSoup, str],
-                None,
-            ],
+            HtmlModifierProtocol,
         ] = OrderedDict()
         self.js_modifiers: OrderedDict[str, Callable[[str], str]] = OrderedDict()
 
@@ -34,8 +43,8 @@ class ModifyRule(Singleton):
         """Add a HTML modification rule."""
 
         def wrapper(
-            func: Callable[[BeautifulSoup, str], None],
-        ) -> Callable[[BeautifulSoup, str], None]:
+            func: HtmlModifierProtocol,
+        ) -> HtmlModifierProtocol:
             instance = cls()
             if not isinstance(func, Callable):
                 raise TypeError("func must be a callable")
@@ -47,7 +56,9 @@ class ModifyRule(Singleton):
 
             instance.html_modifiers[pattern] = func
             logger.info(
-                "Added HTML modification rule: %s -> %s", pattern, func.__name__
+                "Added HTML modification rule: %s -> %s",
+                pattern,
+                getattr(func, "__name__", repr(func)),
             )
             return func
 
@@ -84,6 +95,30 @@ class ModifyRule(Singleton):
 
         body.append(button)
 
+    def _inject_dom_observer(self, soup: BeautifulSoup, is_proxy_images: bool) -> None:
+        """Inject DOM observer script for dynamic content handling."""
+        # always inject DOM observer to handle lazy loading, regardless of proxy_images setting
+        existing_scripts = soup.find_all("script", src=True)
+        has_observer = False
+        for script in existing_scripts:
+            if isinstance(script, Tag):
+                src_attr = script.get("src")
+                if isinstance(src_attr, str) and "proxy-dom-observer.js" in src_attr:
+                    has_observer = True
+                    break
+
+        if not has_observer:
+            observer_script = soup.new_tag(
+                "script", src=url_for("static", filename="base/proxy-dom-observer.js")
+            )
+            # ensure head element exists before appending
+            if soup.head is not None:
+                soup.head.append(observer_script)  # type: ignore
+            else:
+                logger.warning(
+                    "no <head> element found, cannot inject DOM observer script"
+                )
+
     def modify_html(
         self,
         page_url: str,
@@ -92,12 +127,22 @@ class ModifyRule(Singleton):
         is_proxy_images: bool,
     ) -> str:
         """Modify HTML content using registered rules."""
-        self._proxy_image_toggle_html(soup, is_proxy_images)
+        try:
+            self._proxy_image_toggle_html(soup, is_proxy_images)
+            self._inject_dom_observer(soup, is_proxy_images)
 
-        for pattern, func in self.html_modifiers.items():
-            if re.search(pattern, page_url):
-                logger.info("Applying rule: %s", pattern)
-                func(soup, html_content)
+            for pattern, func in self.html_modifiers.items():
+                if re.search(pattern, page_url):
+                    logger.info("applying rule: %s", pattern)
+                    try:
+                        func(soup, html_content, proxy_images=is_proxy_images)
+                    except TypeError:
+                        # fallback for functions that don't accept proxy_images parameter
+                        func(soup, html_content)
+                    except Exception as e:
+                        logger.error("error applying rule %s: %s", pattern, e)
+        except Exception as e:
+            logger.error("error modifying HTML content: %s", e)
         return str(soup)
 
     def modify_js(self, page_url: str, html_content: str) -> str:
@@ -120,7 +165,6 @@ def modify_html_content(
     is_proxy_images: bool = False,
 ) -> str:
     """Modify HTML content to inject custom elements and fix relative URLs"""
-    request_url_parts = urlparse(request_url)
     page_url_parts = urlparse(page_url)
 
     try:
@@ -128,7 +172,6 @@ def modify_html_content(
         tags_attr = [
             ("a", "href"),
             ("img", "src"),
-            ("img", "data-src"),
             ("link", "href"),
             ("script", "src"),
             ("form", "action"),
@@ -141,22 +184,27 @@ def modify_html_content(
             for tag in soup.find_all(tag_name, {attr_name: True}):
                 if not isinstance(tag, Tag):
                     continue
-                url = tag[attr_name]
-                assert isinstance(url, str)
-                url_parts = urlparse(url)
-                if (
-                    not url
-                    or not isinstance(url, str)
-                    or url.startswith(
-                        (
-                            "javascript:",
-                            "data:",
-                            "mailto:",
-                            "tel:",
-                            "..",
-                        )
+
+                url = tag.get(attr_name)
+                if not url or not isinstance(url, str):
+                    continue
+
+                # skip certain URL types
+                if url.startswith(
+                    (
+                        "javascript:",
+                        "data:",
+                        "mailto:",
+                        "tel:",
+                        "..",
                     )
                 ):
+                    continue
+
+                try:
+                    url_parts = urlparse(url)
+                except Exception as e:
+                    logger.debug("failed to parse URL %s: %s", url, e)
                     continue
 
                 if url.startswith(("http://", "https://")):
@@ -165,8 +213,8 @@ def modify_html_content(
 
                     tag[attr_name] = (
                         f"{proxy_base}p/{url_parts.netloc}/{url_parts.path.lstrip('/')}"
-                        f"{url_parts.query and '?' + url_parts.query or ''}"
-                        f"{url_parts.fragment and '#' + url_parts.fragment or ''}"
+                        f"{'?' + url_parts.query if url_parts.query else ''}"
+                        f"{'#' + url_parts.fragment if url_parts.fragment else ''}"
                     )
 
                 elif url.startswith("//"):
@@ -198,7 +246,7 @@ def modify_html_content(
                     else:
                         tag[attr_name] = f"/p/{base_url}/{url.lstrip('/')}"
 
-                logger.info("Modified %s to: %s", url, tag[attr_name])
+                logger.debug("modified %s to: %s", url, tag[attr_name])
 
         return ModifyRule().modify_html(page_url, soup, html_content, is_proxy_images)
 
@@ -206,7 +254,7 @@ def modify_html_content(
         raise e from None
 
     except Exception as e:
-        logger.error("Failed to parse HTML content: %s", e)
+        logger.error("failed to parse HTML content: %s", e)
         return html_content
 
 
@@ -215,5 +263,5 @@ def modify_js_content(page_url: str, content: str) -> str:
     try:
         return ModifyRule().modify_js(page_url, content)
     except Exception as e:
-        logger.error("Failed to parse JS content: %s", e)
+        logger.error("failed to parse JS content: %s", e)
         return content
