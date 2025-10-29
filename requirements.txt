@@ -3,3 +3,4 @@ quart
 beautifulsoup4
 cloudscraper
 requests
+python-dotenv
