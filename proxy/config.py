@@ -1,23 +1,24 @@
 import argparse
 import os
-from typing import Any
+from typing import Any, Dict
+
+from dotenv import find_dotenv, load_dotenv
 
 from .singleton import Singleton
 
 
 class ConfigSingleton(Singleton):
-    """
-    A singleton class for managing configuration values from environment variables
+    """A singleton class for managing configuration values from environment variables
     and command-line arguments.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the configuration singleton."""
-        self._config = {}
+        self._config: Dict[str, Any] = {}
         self._parse_args()
         self._load_from_env()
 
-    def _parse_args(self):
+    def _parse_args(self) -> None:
         """Parse command line arguments."""
         parser = argparse.ArgumentParser()
         parser.add_argument(
@@ -43,7 +44,35 @@ class ConfigSingleton(Singleton):
             "--addr",
             dest="ADDR",
             default="0.0.0.0:5000",
-            help="Address to bind the server to, default is '0.0.0.0:5000'",
+            help="address to bind the server to, default is '0.0.0.0:5000'",
+        )
+        parser.add_argument(
+            "--cache-max-items",
+            dest="CACHE_MAX_ITEMS",
+            type=int,
+            default=500,
+            help="maximum number of items in resource cache",
+        )
+        parser.add_argument(
+            "--cache-max-memory-mb",
+            dest="CACHE_MAX_MEMORY_MB",
+            type=int,
+            default=100,
+            help="maximum memory usage in MB for resource cache",
+        )
+        parser.add_argument(
+            "--cache-ttl-seconds",
+            dest="CACHE_TTL_SECONDS",
+            type=int,
+            default=3600,
+            help="cache time-to-live in seconds",
+        )
+        parser.add_argument(
+            "--cache-max-item-size-mb",
+            dest="CACHE_MAX_ITEM_SIZE_MB",
+            type=int,
+            default=10,
+            help="maximum size in MB for a single cached item",
         )
 
         args, _ = parser.parse_known_args()
@@ -51,13 +80,21 @@ class ConfigSingleton(Singleton):
             if value is not None:
                 self._config[key] = value
 
-    def _load_from_env(self):
+    def _load_from_env(self) -> None:
         """Load configuration from environment variables (if not already set by args)."""
-        env_vars = {
+        env_vars: Dict[str, Any] = {
             "LOG_LEVEL": "INFO",
             "LOG_FUNCTION_CALL": False,
             "GALLERY_PATH": "galleries",
+            "ADDR": "0.0.0.0:5000",
+            "CACHE_MAX_ITEMS": 500,
+            "CACHE_MAX_MEMORY_MB": 100,
+            "CACHE_TTL_SECONDS": 3600,
+            "CACHE_MAX_ITEM_SIZE_MB": 10,
         }
+
+        load_dotenv()
+        load_dotenv(find_dotenv(".env.local"))
 
         for key, default in env_vars.items():
             if key not in self._config:
@@ -117,6 +154,26 @@ class ConfigSingleton(Singleton):
     def port(self) -> int:
         """Get the port to bind the server to."""
         return int(self.addr.split(":")[1]) if ":" in self.addr else 5000
+
+    @property
+    def cache_max_items(self) -> int:
+        """Get the maximum number of items in resource cache."""
+        return self._config.get("CACHE_MAX_ITEMS", 500)
+
+    @property
+    def cache_max_memory_mb(self) -> int:
+        """Get the maximum memory usage in MB for resource cache."""
+        return self._config.get("CACHE_MAX_MEMORY_MB", 100)
+
+    @property
+    def cache_ttl_seconds(self) -> int:
+        """Get the cache time-to-live in seconds."""
+        return self._config.get("CACHE_TTL_SECONDS", 3600)
+
+    @property
+    def cache_max_item_size_mb(self) -> int:
+        """Get the maximum size in MB for a single cached item."""
+        return self._config.get("CACHE_MAX_ITEM_SIZE_MB", 10)
 
 
 Config = ConfigSingleton()
