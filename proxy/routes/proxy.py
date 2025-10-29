@@ -10,6 +10,7 @@ from quart.utils import run_sync
 from ..errors import NeedCSRF
 from ..modifiers import modify_html_content, modify_js_content
 from ..utils import Requests, ResourceCache
+from ..utils.logger import get_logger
 
 if TYPE_CHECKING:
     from quart import Quart
@@ -18,7 +19,7 @@ if TYPE_CHECKING:
 
 __all__ = ("register_routes",)
 
-
+logger = get_logger(__name__)
 bp = Blueprint("proxy", __name__)
 rs_cache = ResourceCache()
 requester = Requests()
@@ -36,45 +37,45 @@ def arg_to_bool(arg: str | None = None, default: bool = False) -> bool:
 
 
 @bp.route("/<path:url>", methods=["GET", "POST"])
-async def proxy(url: str):
+async def proxy(url: str) -> Response:
     """Fetches the specified URL and streams it out to the client.
     If the request was referred by the proxy itself (e.g. this is an image fetch
-    for a previously proxied HTML page), then the original Referer is passed."""
-    # Check if url to proxy has host only, and redirect with trailing slash
-    # (path component) to avoid breakage for downstream apps attempting base
-    # path detection
-    # url_parts = urlparse("%s://%s" % (request.scheme, url))
-    # if url_parts.path == "":
-    #     parts = urlparse(request.url)
-    #     logger.warning(
-    #         "Proxy request without a path was sent, redirecting assuming '/': %s -> %s/"
-    #         % (url, url)
-    #     )
-    #     return redirect(urlunparse(parts._replace(path=parts.path + "/")))
+    for a previously proxied HTML page), then the original Referer is passed.
+    """
     is_proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
 
-    if rc := rs_cache.get(url):
+    if cached_response := rs_cache.get(url):
         return Response(
-            rc[1],
-            headers=rc[0],
+            cached_response[1],
+            headers=cached_response[0],
             status=200,
         )
-    data = await request.form if request.method == "POST" else None
-    need_url = "https://" + url
-    r: RequestResponse = await run_sync(
-        lambda: requester.request(
-            request.method,
-            need_url,
-            params=request.args,
-            headers=dict(request.headers),
-            allow_redirects=False,
-            data=data,
-            timeout=10,
-            stream=True,
-        ),
-    )()
 
-    headers = r.headers.copy()
+    data = await request.form if request.method == "POST" else None
+    target_url = "https://" + url
+
+    try:
+        response: RequestResponse = await run_sync(
+            lambda: requester.request(
+                request.method,
+                target_url,
+                params=request.args,
+                headers=dict(request.headers),
+                allow_redirects=False,
+                data=data,
+                timeout=10,
+                stream=True,
+            ),
+        )()
+
+    except Exception as e:
+        logger.error("failed to fetch URL %s: %s", target_url, e)
+        return Response(
+            f"proxy error: {e}",
+            status=500,
+        )
+
+    headers = response.headers.copy()
     headers.pop("Content-Encoding", None)
     headers.pop("Transfer-Encoding", None)
     headers.pop("Content-Length", None)
@@ -82,75 +83,89 @@ async def proxy(url: str):
     headers.pop("X-Content-Security-Policy", None)
     headers.pop("Remote-Addr", None)
 
-    # if "Set-Cookie" in headers:
-    #     cookie = headers["Set-Cookie"]
-    #     cookie = cookie.replace("SameSite=Lax", "SameSite=None; Secure")
-    #     regex = re.compile(r"[dD]omain=(.?\w+)+;")
-    #     for match in regex.finditer(cookie):
-    #         idx_end = match.end()
-    #         cookie = cookie[:idx_end] + " SameSite=None; Secure;" + cookie[idx_end:]
-    #     headers["Set-Cookie"] = cookie
-
     content_type = headers.get("Content-Type", "")
     if "text/html" in content_type:
         if "Location" in headers:
             parts = urlparse(headers["Location"])
             if not parts.netloc:
                 request_parts = urlparse(request.url)
-                _split_paths = request_parts.path.split("/", 3)
-                if len(_split_paths) < 4:
-                    raise ValueError(
-                        "Invalid URL path for redirect: %s" % request_parts.path
-                    )  # raise error for now, could be handled better
-                parts = parts._replace(netloc=_split_paths[2])
+                split_paths = request_parts.path.split("/", 3)
+                if len(split_paths) < 4:
+                    logger.error(
+                        "invalid URL path for redirect: %s", request_parts.path
+                    )
+                    return Response("invalid redirect path", status=400)
+                parts = parts._replace(netloc=split_paths[2])
 
             headers["Location"] = (
-                f"/p/{parts.netloc}/{parts.path.lstrip('/')}{parts.query and '?' + parts.query or ''}{parts.fragment and '#' + parts.fragment or ''}"
+                f"/p/{parts.netloc}/{parts.path.lstrip('/')}"
+                f"{'?' + parts.query if parts.query else ''}"
+                f"{'#' + parts.fragment if parts.fragment else ''}"
             )
 
-        parts = urlparse(r.url)
+        parts = urlparse(response.url)
         try:
             html_content = modify_html_content(
                 request_url=request.url,
-                page_url=r.url,
-                html_content=r.text,
+                page_url=response.url,
+                html_content=response.text,
                 base_url=parts.netloc,
                 proxy_base=request.host_url,
                 is_proxy_images=is_proxy_images,
             )
         except NeedCSRF as e:
+            logger.warning("CSRF challenge detected for %s: %s", target_url, e)
             html_content = await render_template(
                 "csrf.jinja2",
                 error_message=str(e),
                 redirect_url=request.url,
-                problem_url=need_url,
+                problem_url=target_url,
                 netloc=parts.netloc,
             )
 
         return Response(
             html_content,
             headers=dict(headers),
-            status=r.status_code,
+            status=response.status_code,
         )
 
     elif "application/javascript" in content_type:
-        return modify_js_content(request.url, r.text)
+        modified_js = modify_js_content(request.url, response.text)
+        return Response(
+            modified_js,
+            headers=dict(headers),
+            status=response.status_code,
+        )
+
+    headers.pop("Content-Security-Policy", None)
+    headers.pop("X-Content-Security-Policy", None)
+    headers["Access-Control-Allow-Origin"] = "*"
 
     def generate_response():
-        _headers = headers.copy()
-        _headers.pop("Content-Security-Policy", None)
-        _headers.pop("X-Content-Security-Policy", None)
-        _headers["Access-Control-Allow-Origin"] = "*"
+        cache = BytesIO() if response.status_code == 200 else None
 
-        is_good = r.status_code == 200
-        cache = BytesIO()
-        for chunk in r.iter_content(4096):
-            yield chunk
-            if is_good:
-                cache.write(chunk)
-        cache.seek(0)
-        if is_good:
-            rs_cache.put(url, (dict(_headers), cache.getvalue()))
+        try:
+            for chunk in response.iter_content(4096):
+                yield chunk
+                if cache:
+                    cache.write(chunk)
+
+            if cache:
+                cache.seek(0)
+                cache_headers = headers.copy()
+                cache_headers.pop("Date", None)
+                rs_cache.put(
+                    url,
+                    dict(cache_headers),
+                    cache.getvalue(),
+                    content_type=headers.get("Content-Type"),
+                )
+
+        except Exception as e:
+            logger.error("error streaming response for %s: %s", url, e)
+        finally:
+            if cache:
+                cache.close()
 
     return Response(
         generate_response(),
@@ -158,7 +173,7 @@ async def proxy(url: str):
             **headers,
             "Access-Control-Allow-Origin": "*",
         },
-        status=r.status_code,
+        status=response.status_code,
     )
 
 
