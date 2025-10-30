@@ -28,6 +28,11 @@ async def root(url: str):
     # This allows server-relative and protocol-relative URLs to work.
     referer = request.headers.get("referer")
     if not referer:
+        if url.startswith(("http://", "https://")):
+            return redirect(url)
+        elif url.startswith("static"):
+            return Response(status=404)
+
         return redirect(f"/next/{url.lstrip('/')}/")
 
     referer_parts = referer.split("/p/", maxsplit=1)
