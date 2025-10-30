@@ -276,12 +276,6 @@ def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
 
     remove_ads(soup)
 
-    _logo = soup.find("a", class_="logo")
-    if _logo and isinstance(_logo, Tag):
-        _img = _logo.find("img")
-        if _img and isinstance(_img, Tag):
-            _img["src"] = "/p/nhentai.net/" + _img["src"].lstrip("/")  # type: ignore
-
     for gallery_div in soup.find_all("div", class_="gallery"):
         if not isinstance(gallery_div, Tag):
             continue
