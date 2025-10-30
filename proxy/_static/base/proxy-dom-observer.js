@@ -123,6 +123,7 @@
       return url;
     }
 
+    console.log("Transformed URL:", url, "->", newURL);
     return newURL;
   }
 
