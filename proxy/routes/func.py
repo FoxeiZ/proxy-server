@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from quart import Blueprint
-from quart.utils import run_sync
 
 from ..downloader import DownloadPool
 from ..enums import FileStatus
@@ -29,7 +28,7 @@ async def add(_id: int):
 
     info = gallery_info_cache.get(_id)
     if not info:
-        r = await run_sync(lambda: Requests().get(f"https://nhentai.net/g/{_id}"))()
+        r = await Requests().get(f"https://nhentai.net/g/{_id}")
         if r.status_code != 200:
             return {"error": "Gallery not found"}, 404
         html_content = r.text

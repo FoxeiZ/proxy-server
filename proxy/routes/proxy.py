@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from quart import Blueprint, Response, render_template, request
-from quart.utils import run_sync
 
 from ..errors import NeedCSRF
 from ..modifiers import modify_html_content, modify_js_content
@@ -14,7 +13,6 @@ from ..utils.logger import get_logger
 
 if TYPE_CHECKING:
     from quart import Quart
-    from requests import Response as RequestResponse
 
 
 __all__ = ("register_routes",)
@@ -51,30 +49,30 @@ async def proxy(url: str) -> Response:
             status=200,
         )
 
-    data = await request.form if request.method == "POST" else None
+    request_data = None
+    if request.method == "POST":
+        content_type = request.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            request_data = await request.get_json()
+        elif (
+            "multipart/form-data" in content_type
+            or "application/x-www-form-urlencoded" in content_type
+        ):
+            request_data = await request.form
+        else:
+            request_data = await request.get_data()
+
     target_url = "https://" + url
 
-    try:
-        response: RequestResponse = await run_sync(
-            lambda: requester.request(
-                request.method,
-                target_url,
-                params=request.args,
-                headers=dict(request.headers),
-                allow_redirects=False,
-                data=data,
-                timeout=10,
-                stream=True,
-            ),
-        )()
-
-    except Exception as e:
-        logger.error("failed to fetch URL %s: %s", target_url, e)
-        return Response(
-            f"proxy error: {e}",
-            status=500,
-        )
-
+    response = await requester.request(
+        request.method,
+        target_url,
+        params=request.args,
+        headers=dict(request.headers),
+        follow_redirects=True,
+        data=request_data,
+        timeout=10,
+    )
     headers = response.headers.copy()
     headers.pop("Content-Encoding", None)
     headers.pop("Transfer-Encoding", None)
@@ -103,13 +101,12 @@ async def proxy(url: str) -> Response:
                 f"{'#' + parts.fragment if parts.fragment else ''}"
             )
 
-        parts = urlparse(response.url)
         try:
             html_content = modify_html_content(
                 request_url=request.url,
-                page_url=response.url,
+                page_url=str(response.url),
                 html_content=response.text,
-                base_url=parts.netloc,
+                base_url=response.url._uri_reference.netloc,
                 proxy_base=request.host_url,
                 is_proxy_images=is_proxy_images,
             )
@@ -120,7 +117,7 @@ async def proxy(url: str) -> Response:
                 error_message=str(e),
                 redirect_url=request.url,
                 problem_url=target_url,
-                netloc=parts.netloc,
+                netloc=response.url._uri_reference.netloc,
             )
 
         return Response(
@@ -141,11 +138,11 @@ async def proxy(url: str) -> Response:
     headers.pop("X-Content-Security-Policy", None)
     headers["Access-Control-Allow-Origin"] = "*"
 
-    def generate_response():
+    async def generate_response():
         cache = BytesIO() if response.status_code == 200 else None
 
         try:
-            for chunk in response.iter_content(4096):
+            async for chunk in response.aiter_bytes(4096):
                 yield chunk
                 if cache:
                     cache.write(chunk)
