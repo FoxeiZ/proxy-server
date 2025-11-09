@@ -2,5 +2,5 @@ Flask
 quart
 beautifulsoup4
 cloudscraper
-requests
+httpx
 python-dotenv
