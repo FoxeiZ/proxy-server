@@ -5,6 +5,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+import httpx
 from quart import Blueprint, Response, render_template, request
 
 from ..errors import NeedCSRF
@@ -65,15 +66,20 @@ async def proxy(url: str) -> Response:
 
     target_url = "https://" + url
 
-    response = await requester.request(
-        request.method,
-        target_url,
-        params=request.args,
-        headers=dict(request.headers),
-        follow_redirects=True,
-        data=request_data,
-        timeout=10,
-    )
+    try:
+        response = await requester.request(
+            request.method,
+            target_url,
+            params=request.args,
+            headers=dict(request.headers),
+            follow_redirects=True,
+            data=request_data,
+            timeout=10,
+        )
+    except httpx.ConnectError as e:
+        logger.error("connection error fetching %s: %s", target_url, e)
+        return Response(f"connection error fetching {target_url}", status=502)
+
     headers = response.headers.copy()
     headers.pop("Content-Encoding", None)
     headers.pop("Transfer-Encoding", None)
