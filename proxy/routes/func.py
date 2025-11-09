@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from quart import Blueprint
@@ -36,7 +37,7 @@ async def add(_id: int):
         if not info:
             return {"error": "Failed to parse gallery information"}, 500
 
-    file_status = check_file_status_gallery(gallery_info=info)
+    file_status = await asyncio.to_thread(check_file_status_gallery, gallery_info=info)
     if file_status in [FileStatus.CONVERTED, FileStatus.COMPLETED]:
         return {
             "message": f"Gallery already {file_status.value}",
@@ -44,7 +45,7 @@ async def add(_id: int):
             "status": file_status.value,
         }, 200
 
-    if pool.is_downloading(_id):
+    if await pool.is_downloading(_id):
         return {
             "message": "Gallery is already being downloaded",
             "gallery_id": _id,
@@ -67,7 +68,7 @@ async def get_progress(gallery_id: int):
     if not progress_ctx:
         return {"error": "No download progress found for this gallery"}, 404
 
-    async with progress_ctx as progress:
+    async with progress_ctx.context_lock() as progress:
         return {
             "gallery_id": progress.gallery_id,
             "total_images": progress.total_images,
@@ -82,7 +83,7 @@ async def get_progress(gallery_id: int):
 @bp.route("/cancel/<int:gallery_id>", methods=["GET"])
 async def cancel_download(gallery_id: int):
     """Cancel the download for a specific gallery."""
-    if not pool.cancel(gallery_id):
+    if not await pool.cancel(gallery_id):
         return {"error": "No download found for this gallery"}, 404
 
     return {"message": "Download cancelled successfully", "gallery_id": gallery_id}, 200

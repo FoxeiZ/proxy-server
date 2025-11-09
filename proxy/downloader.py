@@ -363,9 +363,9 @@ class DownloadPool(Singleton):
 
     async def cancel(self, gallery_id: int) -> bool:
         async with self._lock:
-            if gallery_id not in self._progress:
+            progress_ctx = self._progress.get(gallery_id, None)
+            if not progress_ctx:
                 return False
-            progress_ctx = self._progress[gallery_id]
 
         async with progress_ctx.context_lock() as progress_ctx:
             if progress_ctx.status == DownloadStatus.DOWNLOADING:

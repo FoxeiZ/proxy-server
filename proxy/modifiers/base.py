@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import re
 from collections import OrderedDict
-from typing import Callable, Protocol
+from typing import Callable, Coroutine, Protocol
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
@@ -12,7 +13,11 @@ from ..errors import NeedToHandle
 from ..singleton import Singleton
 from ..utils.logger import get_logger
 
-__all__ = ("ModifyRule", "modify_html_content", "modify_js_content")
+__all__ = (
+    "ModifyRule",
+    "modify_html_content",
+    "modify_js_content",
+)
 
 
 logger = get_logger(__name__)
@@ -26,7 +31,7 @@ class HtmlModifierProtocol(Protocol):
         /,
         *,
         proxy_images: bool = False,
-    ) -> None: ...
+    ) -> None | Coroutine[None, None, None]: ...
 
 
 class ModifyRule(Singleton):
@@ -119,7 +124,7 @@ class ModifyRule(Singleton):
                     "no <head> element found, cannot inject DOM observer script"
                 )
 
-    def modify_html(
+    async def modify_html(
         self,
         page_url: str,
         soup: BeautifulSoup,
@@ -135,10 +140,15 @@ class ModifyRule(Singleton):
                 if re.search(pattern, page_url):
                     logger.info("applying rule: %s", pattern)
                     try:
-                        func(soup, html_content, proxy_images=is_proxy_images)
+                        result = func(soup, html_content, proxy_images=is_proxy_images)
+                        if inspect.iscoroutine(result):
+                            await result
+                        elif callable(func) and not inspect.iscoroutinefunction(func):
+                            pass
                     except TypeError:
-                        # fallback for functions that don't accept proxy_images parameter
-                        func(soup, html_content)
+                        result = func(soup, html_content)
+                        if inspect.iscoroutine(result):
+                            await result
                     except Exception as e:
                         logger.error("error applying rule %s: %s", pattern, e)
         except Exception as e:
@@ -155,7 +165,7 @@ class ModifyRule(Singleton):
         return modified_content
 
 
-def modify_html_content(
+async def modify_html_content(
     request_url: str,
     page_url: str,
     html_content: str,
@@ -248,7 +258,9 @@ def modify_html_content(
 
                 logger.debug("modified %s to: %s", url, tag[attr_name])
 
-        return ModifyRule().modify_html(page_url, soup, html_content, is_proxy_images)
+        return await ModifyRule().modify_html(
+            page_url, soup, html_content, is_proxy_images
+        )
 
     except NeedToHandle as e:
         raise e from None

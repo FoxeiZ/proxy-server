@@ -109,8 +109,7 @@ async def proxy(url: str) -> Response:
             )
 
         try:
-            html_content = await asyncio.to_thread(
-                modify_html_content,
+            html_content = await modify_html_content(
                 request_url=request.url,
                 page_url=str(response.url),
                 html_content=response.text,

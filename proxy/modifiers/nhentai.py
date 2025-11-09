@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import TYPE_CHECKING, List, Optional, cast
@@ -132,7 +133,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
 
 
 @ModifyRule.add_html_rule(r"/g/\d+")
-def modify_chapter(
+async def modify_chapter(
     soup: BeautifulSoup, html_content: str, *, proxy_images: bool = False
 ) -> None:
     """Modify nhentai chapter pages to add download functionality."""
@@ -177,10 +178,12 @@ def modify_chapter(
         _a.append(_i)
         return _a
 
-    def create_add():
-        file_status = check_file_status_gallery(gallery_info=gallery_data)
+    async def create_add():
+        file_status = await asyncio.to_thread(
+            check_file_status_gallery, gallery_info=gallery_data
+        )
         pool = DownloadPool()
-        is_downloading = pool.is_downloading(gallery_data["id"])
+        is_downloading = await pool.is_downloading(gallery_data["id"])
 
         hint_text = ""
         attrs = {
@@ -250,7 +253,7 @@ def modify_chapter(
         return _a
 
     btn_container.clear()
-    btn_container.append(create_add())
+    btn_container.append(await create_add())
     btn_container.append(create_download())
     btn_container.append(soup.new_tag("br"))
     btn_container.append(create_image_proxy())
