@@ -137,7 +137,7 @@ async def gallery_download_progress():
             "progress_percentage": p.progress_percentage,
             "is_complete": p.is_complete,
         }
-        for p in progress
+        async for p in progress
     ]
     return json_progress
 

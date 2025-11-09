@@ -7,3 +7,8 @@ __pycache__/
 venv/
 !logger.py
 galleries/
+
+*.md
+!README.md
+
+.env*

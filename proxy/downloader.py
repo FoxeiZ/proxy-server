@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import zipfile
+from asyncio import Lock as AsyncLock
+from asyncio import Semaphore
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
-from time import sleep
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Optional
 
 from .enums import DownloadStatus, FileStatus
 from .singleton import Singleton
@@ -47,126 +49,194 @@ class DownloadProgress:
         return self.downloaded_images == self.total_images
 
 
+class DownloadProgressWithLock:
+    def __init__(self, *args, **kwargs):
+        self._lock = AsyncLock()
+        self._progress = DownloadProgress(*args, **kwargs)
+
+    @asynccontextmanager
+    async def context_lock(self):
+        async with self._lock:
+            yield self._progress
+
+
 class DownloadPool(Singleton):
     """A pool for managing download tasks."""
 
     def __init__(self, max_workers: int = 5) -> None:
         super().__init__()
-        self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._semaphore = Semaphore(max_workers)
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._requester = Requests()
-        self._progress: dict[int, DownloadProgress] = {}
-        self._progress_lock = Lock()
+        self._progress: dict[int, DownloadProgressWithLock] = {}
+        self._lock = AsyncLock()
+        self._tasks: dict[int, asyncio.Task] = {}
 
-    def _download(self, progress: DownloadProgress, info: "NhentaiGallery") -> None:
+    async def _download(
+        self, progress_ctx: DownloadProgressWithLock, info: "NhentaiGallery"
+    ) -> None:
         """Download images for the given gallery information."""
-        gallery_title = info["title"]["main_title"]
-        gallery_id = info["id"]
-        gallery_language = info["language"]
+        async with self._semaphore:
+            gallery_title = info["title"]["main_title"]
+            gallery_id = info["id"]
+            gallery_language = info["language"]
 
-        if not gallery_title or not gallery_id or not gallery_language:
-            logger.error(
-                "invalid gallery information: title=%s, id=%s, language=%s",
-                gallery_title,
-                gallery_id,
-                gallery_language,
-            )
-            return
-
-        logger.info(
-            "downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
-        )
-        progress.status = DownloadStatus.DOWNLOADING
-
-        gallery_path, _ = make_gallery_path(
-            gallery_title=info["title"], gallery_language=gallery_language, cache=True
-        )
-        gallery_path = gallery_path / str(gallery_id)
-        if not gallery_path.exists():
-            gallery_path.mkdir(parents=True, exist_ok=True)
-
-        for img_idx, image in enumerate(info["images"]["pages"], start=1):
-            if progress.status == DownloadStatus.CANCELLED:
+            if not gallery_title or not gallery_id or not gallery_language:
+                logger.error(
+                    "invalid gallery information: title=%s, id=%s, language=%s",
+                    gallery_title,
+                    gallery_id,
+                    gallery_language,
+                )
                 return
 
-            image_type = IMAGE_TYPE_MAPPING.get(image.get("t", "j"))
+            logger.info(
+                "downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
+            )
+            async with progress_ctx.context_lock() as progress:
+                progress.status = DownloadStatus.DOWNLOADING
+
+            gallery_path, _ = make_gallery_path(
+                gallery_title=info["title"],
+                gallery_language=gallery_language,
+                cache=True,
+            )
+            gallery_path = gallery_path / str(gallery_id)
+            await asyncio.to_thread(gallery_path.mkdir, exist_ok=True)
+
+            download_tasks = []
             try:
-                self._download_image(
-                    f"https://i{{idx_server}}.nhentai.net/galleries/{info['media_id']}/{img_idx}.{image_type}",
-                    gallery_path / f"{img_idx}.{image_type}",
-                )
-                self._on_download_image_complete(gallery_id)
-            except Exception as e:
-                self._on_download_image_error(gallery_id, e)
+                for img_idx, image in enumerate(info["images"]["pages"], start=1):
+                    async with progress_ctx.context_lock() as progress:
+                        if progress.status == DownloadStatus.CANCELLED:
+                            break
 
-    def _on_download_image_error(self, gallery_id: int, error: Exception):
+                    image_type = IMAGE_TYPE_MAPPING.get(image.get("t", "j"))
+                    url = f"https://i{{idx_server}}.nhentai.net/galleries/{info['media_id']}/{img_idx}.{image_type}"
+                    path = gallery_path / f"{img_idx}.{image_type}"
+
+                    task = self._download_image(url, path, gallery_id)
+                    download_tasks.append(task)
+
+                if download_tasks:
+                    results = await asyncio.gather(
+                        *download_tasks, return_exceptions=True
+                    )
+                    for result in results:
+                        if isinstance(result, Exception):
+                            logger.error("download task failed: %s", result)
+            except asyncio.CancelledError:
+                async with progress_ctx.context_lock() as progress:
+                    progress.status = DownloadStatus.CANCELLED
+                    logger.warning(
+                        "download interrupted for gallery ID %d, waiting for tasks to finish",
+                        progress.gallery_id,
+                    )
+                if download_tasks:
+                    await asyncio.gather(*download_tasks, return_exceptions=True)
+                raise
+
+    async def _on_download_image_error(self, gallery_id: int, error: Exception):
         """Handle errors during image download."""
-        with self._progress_lock:
-            progress = self._progress.get(gallery_id)
-            if progress:
-                progress.failed_images += 1
-                logger.error(
-                    "Error downloading image for gallery ID %d: %s",
-                    progress.gallery_id,
-                    error,
-                )
+        async with self._lock:
+            progress_ctx = self._progress.get(gallery_id)
 
-    def _on_download_image_complete(self, gallery_id: int):
+        if not progress_ctx:
+            return
+
+        async with progress_ctx.context_lock() as progress:
+            progress.failed_images += 1
+            logger.error(
+                "error downloading image for gallery ID %d: %s",
+                progress.gallery_id,
+                error,
+            )
+
+    async def _on_download_image_complete(self, gallery_id: int):
         """Callback for when a download task is completed."""
-        with self._progress_lock:
-            progress = self._progress.get(gallery_id)
-            if progress:
-                progress.downloaded_images += 1
-                if (
-                    progress.downloaded_images + progress.failed_images
-                    >= progress.total_images
-                ):
-                    if progress.failed_images == 0:
-                        logger.info(
-                            "All images downloaded for gallery ID %d",
-                            gallery_id,
-                        )
-                        progress.status = DownloadStatus.COMPLETED
-                    else:
-                        progress.status = DownloadStatus.MISSING
+        async with self._lock:
+            progress_ctx = self._progress.get(gallery_id)
 
-    def _download_image(self, url: str, path: Path):
-        if path.exists():
-            logger.info("Image already exists: %s", path)
+        if not progress_ctx:
+            return
+
+        async with progress_ctx.context_lock() as progress:
+            progress.downloaded_images += 1
+            if (
+                progress.downloaded_images + progress.failed_images
+                >= progress.total_images
+            ):
+                if progress.failed_images == 0:
+                    logger.info("all images downloaded for gallery ID %d", gallery_id)
+                    progress.status = DownloadStatus.COMPLETED
+                else:
+                    progress.status = DownloadStatus.MISSING
+
+    async def _download_image(self, url: str, path: Path, gallery_id: int):
+        if await asyncio.to_thread(path.exists):
+            logger.debug("image already exists: %s", path)
+            await self._on_download_image_complete(gallery_id)
             return
 
         for idx_server in range(1, 10):
             formatted_url = url.format(idx_server=idx_server)
-            logger.info("Downloading image from %s to %s", formatted_url, path)
             try:
-                r = self._requester.get(formatted_url, stream=True, timeout=30)
-                if r.status_code == 200:
-                    with open(path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            # sleep(1)
-                            if chunk:
-                                f.write(chunk)
-                    logger.info("Successfully downloaded: %s", formatted_url)
-                    sleep(0.1)
-                    return
-                else:
-                    logger.warning(
-                        "Failed to download image from %s: %s",
-                        formatted_url,
-                        r.status_code,
-                    )
+                async with self._requester.stream(
+                    "GET", formatted_url, timeout=30
+                ) as response:
+                    if response.status_code == 200:
+                        with open(path, "wb") as f:
+                            async for chunk in response.aiter_bytes(chunk_size=8192):
+                                await asyncio.to_thread(f.write, chunk)
+
+                        logger.debug("successfully downloaded: %s", formatted_url)
+                        await self._on_download_image_complete(gallery_id)
+                        return
+                    else:
+                        logger.warning(
+                            "failed to download image from %s: %s",
+                            formatted_url,
+                            response.status_code,
+                        )
             except Exception as e:
-                logger.error("Error downloading from %s: %s", formatted_url, e)
+                logger.error("error downloading from %s: %s", formatted_url, e)
                 continue
 
-        raise Exception(f"Failed to download from all servers: {url}")
+        await self._on_download_image_error(
+            gallery_id, Exception(f"Failed to download from all servers: {url}")
+        )
 
-    def shutdown(self, wait: bool = True):
-        """Shutdown the download pool and wait for all tasks to complete."""
-        logger.info("Shutting down download pool...")
-        self._pool.shutdown(wait=wait)
-        logger.info("Download pool shutdown complete.")
+    async def _update_progress_and_task(
+        self,
+        gallery_id: int,
+        progress_ctx: DownloadProgressWithLock,
+        task: asyncio.Task,
+    ):
+        async with self._lock:
+            self._progress[gallery_id] = progress_ctx
+            self._tasks[gallery_id] = task
 
-    def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
+    async def _remove_progress_and_task(self, gallery_id: int):
+        async with self._lock:
+            self._progress.pop(gallery_id, None)
+            self._tasks.pop(gallery_id, None)
+
+    async def shutdown(self, wait: bool = True):
+        """Shutdown the download pool and cancel all running tasks."""
+        logger.info("shutting down download pool...")
+
+        async with self._lock:
+            active_tasks = [task for task in self._tasks.values() if not task.done()]
+            for task in active_tasks:
+                task.cancel()
+            self._tasks.clear()
+
+        if wait and active_tasks:
+            await asyncio.gather(*active_tasks, return_exceptions=True)
+
+        logger.info("download pool shutdown complete")
+
+    def _sync_save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
         gallery_path, scan_callback = make_gallery_path(
             gallery_title=info["title"], gallery_language=info["language"], cache=True
         )
@@ -208,110 +278,118 @@ class DownloadPool(Singleton):
 
         scan_callback()
 
-    def add(self, info: "NhentaiGallery"):
+    async def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            self._executor,
+            self._sync_save_cbz,
+            info,
+            remove_images,
+        )
+
+    async def add(self, info: "NhentaiGallery"):
         """Submit a download task for the given gallery information."""
         gallery_id = info["id"]
 
-        file_status = check_file_status_gallery(gallery_info=info)
+        file_status = await asyncio.to_thread(
+            check_file_status_gallery,
+            gallery_info=info,
+        )
         if file_status == FileStatus.CONVERTED:
             logger.info(
-                "Gallery ID %d is already converted to CBZ, skipping download.",
+                "gallery ID %d is already converted to CBZ, skipping download",
                 gallery_id,
             )
             return
-
-        if file_status == FileStatus.COMPLETED:
+        elif file_status == FileStatus.COMPLETED:
             logger.info(
-                "Gallery ID %d is already downloaded, converting to CBZ.", gallery_id
+                "gallery ID %d is already downloaded, converting to CBZ", gallery_id
             )
-            # No need to track progress, just convert
-            self._pool.submit(self.save_cbz, info)
+            await self.save_cbz(info)
             return
 
-        # Check if already downloading
-        if self.is_downloading(gallery_id):
+        # is_downloading is already locked internally so we cant double lock here
+        if await self.is_downloading(gallery_id):
             logger.info(
-                "Gallery ID %d is already being downloaded, skipping submission.",
+                "gallery ID %d is already being downloaded, skipping submission",
                 gallery_id,
             )
             return
 
         total_images = len(info["images"]["pages"])
-        progress = DownloadProgress(
+        progress_ctx = DownloadProgressWithLock(
             gallery_id=gallery_id,
             gallery_title=info["title"]["main_title"],
             total_images=total_images,
             status=DownloadStatus.PENDING,
         )
-        fut = self._pool.submit(self._download, progress, info)
-        fut.add_done_callback(
-            lambda _, info=info: self._pool.submit(self.save_cbz, info)
-            if progress.status == DownloadStatus.COMPLETED
-            else None
-        )
-        fut.add_done_callback(
-            lambda _: self.remove_progress(gallery_id)
-            if progress.status
-            in [
-                DownloadStatus.COMPLETED,
-                DownloadStatus.MISSING,
-                DownloadStatus.CANCELLED,
-            ]
-            else None
-        )
-        with self._progress_lock:
-            self._progress[gallery_id] = progress
 
-    def cancel(self, gallery_id: int):
-        """Cancel the download for a specific gallery."""
-        with self._progress_lock:
+        task = asyncio.create_task(self._download_task(progress_ctx, info))
+        await self._update_progress_and_task(gallery_id, progress_ctx, task)
+
+    async def _download_task(
+        self, progress_ctx: DownloadProgressWithLock, info: "NhentaiGallery"
+    ):
+        try:
+            await self._download(progress_ctx, info)
+        finally:
+            async with progress_ctx.context_lock() as progress:
+                if progress.status == DownloadStatus.COMPLETED:
+                    await self.save_cbz(info)
+                await self._remove_progress_and_task(progress.gallery_id)
+
+    async def cancel(self, gallery_id: int) -> bool:
+        async with self._lock:
             if gallery_id not in self._progress:
                 return False
+            progress_ctx = self._progress[gallery_id]
 
-            progress = self._progress[gallery_id]
-            if progress.status == DownloadStatus.DOWNLOADING:
-                progress.status = DownloadStatus.CANCELLED
-                logger.info("Cancelled download for gallery ID %d", gallery_id)
+        async with progress_ctx.context_lock() as progress_ctx:
+            if progress_ctx.status == DownloadStatus.DOWNLOADING:
+                progress_ctx.status = DownloadStatus.CANCELLED
+
+                task = self._tasks.get(gallery_id)
+                if task:
+                    task.cancel()
+
+                logger.info("cancelled download for gallery ID %d", gallery_id)
                 return True
 
             return False
 
-    def get_progress(self, gallery_id: int) -> Optional[DownloadProgress]:
+    async def get_progress(self, gallery_id: int) -> Optional[DownloadProgressWithLock]:
         """Get download progress for a specific gallery."""
-        with self._progress_lock:
+        async with self._lock:
             return self._progress.get(gallery_id)
 
-    # def get_all_progress(self) -> dict[int, DownloadProgress]:
-    #     """Get download progress for all galleries."""
-    #     with self._progress_lock:
-    #         return self._progress
-
-    def get_paginate_progress(
+    async def get_paginate_progress(
         self, page: int = 1, limit: int = 10
-    ) -> list[DownloadProgress]:
+    ) -> AsyncGenerator[DownloadProgress]:
         """Get paginated download progress."""
-        with self._progress_lock:
+        async with self._lock:
             all_progress = list(self._progress.values())
             if not all_progress:
-                return []
+                return
 
             start = (page - 1) * limit
             if start >= len(all_progress):
-                return []
+                return
             end = start + limit
 
-            return all_progress[start:end]
+            for progress_ctx in all_progress[start:end]:
+                async with progress_ctx.context_lock() as progress:
+                    yield progress
 
-    def remove_progress(self, gallery_id: int):
-        """Remove progress tracking for a gallery (useful for cleanup)."""
-        with self._progress_lock:
-            self._progress.pop(gallery_id, None)
-
-    def is_downloading(self, gallery_id: int) -> bool:
+    async def is_downloading(self, gallery_id: int) -> bool:
         """Check if a gallery is currently being downloaded."""
-        with self._progress_lock:
-            progress = self._progress.get(gallery_id)
-            return progress is not None and progress.status in [
+        async with self._lock:
+            progress_ctx = self._progress.get(gallery_id)
+
+        if not progress_ctx:
+            return False
+
+        async with progress_ctx.context_lock() as progress:
+            return progress.status in [
                 DownloadStatus.PENDING,
                 DownloadStatus.DOWNLOADING,
             ]
