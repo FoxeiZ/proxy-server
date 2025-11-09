@@ -16,7 +16,8 @@ def create_app() -> Quart:
         app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
     if os.name == "nt":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        # asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
     return app
 

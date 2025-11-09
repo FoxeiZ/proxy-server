@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import TYPE_CHECKING
 
 from quart import Blueprint, Response, render_template, request
-from quart.utils import run_sync
 
 from ..config import Config
 from ..downloader import DownloadPool
@@ -70,7 +70,7 @@ async def chapter_read(gallery_id: int):
     next_chapter = GalleryScanner.get_next_chapter(gallery=gallery)
     prev_chapter = GalleryScanner.get_prev_chapter(gallery=gallery)
 
-    await run_sync(lambda: gallery.pages)()  # trigger lazy loading
+    await asyncio.to_thread(lambda: gallery.pages)  # trigger lazy loading
     return await render_template(
         "nhentai/reader.jinja2",
         info=gallery.info,
@@ -103,7 +103,7 @@ async def gallery_thumbnail(filename: str):
     """Serve gallery thumbnails."""
     path = os.path.join(Config.cache_path, "thumbnails", filename)
     try:
-        return await run_sync(lambda: ThumbnailCache().read(path))()
+        return await asyncio.to_thread(ThumbnailCache().read, path)
     except FileNotFoundError:
         return "", 404
     except ValueError:

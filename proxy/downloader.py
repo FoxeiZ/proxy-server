@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, AsyncGenerator, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Iterable, Optional
 
 from .enums import DownloadStatus, FileStatus
 from .singleton import Singleton
@@ -59,6 +59,15 @@ class DownloadProgressWithLock:
         async with self._lock:
             yield self._progress
 
+    # which one is better? both are fine i guess
+
+    async def __aenter__(self):
+        await self._lock.acquire()
+        return self._progress
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        self._lock.release()
+
 
 class DownloadPool(Singleton):
     """A pool for managing download tasks."""
@@ -96,13 +105,14 @@ class DownloadPool(Singleton):
             async with progress_ctx.context_lock() as progress:
                 progress.status = DownloadStatus.DOWNLOADING
 
-            gallery_path, _ = make_gallery_path(
+            gallery_path, _ = await asyncio.to_thread(
+                make_gallery_path,
                 gallery_title=info["title"],
                 gallery_language=gallery_language,
                 cache=True,
             )
             gallery_path = gallery_path / str(gallery_id)
-            await asyncio.to_thread(gallery_path.mkdir, exist_ok=True)
+            await asyncio.to_thread(gallery_path.mkdir, exist_ok=True, parents=True)
 
             download_tasks = []
             try:
@@ -178,6 +188,11 @@ class DownloadPool(Singleton):
             await self._on_download_image_complete(gallery_id)
             return
 
+        def chunked_write(fp: Path, chunk: Iterable[bytes]):
+            with open(fp, "wb") as f:
+                for data in chunk:
+                    f.write(data)
+
         for idx_server in range(1, 10):
             formatted_url = url.format(idx_server=idx_server)
             try:
@@ -185,9 +200,11 @@ class DownloadPool(Singleton):
                     "GET", formatted_url, timeout=30
                 ) as response:
                     if response.status_code == 200:
-                        with open(path, "wb") as f:
-                            async for chunk in response.aiter_bytes(chunk_size=8192):
-                                await asyncio.to_thread(f.write, chunk)
+                        chunks = []
+                        async for chunk in response.aiter_bytes(chunk_size=8192):
+                            chunks.append(chunk)
+
+                        await asyncio.to_thread(chunked_write, path, chunks)
 
                         logger.debug("successfully downloaded: %s", formatted_url)
                         await self._on_download_image_complete(gallery_id)
@@ -236,10 +253,12 @@ class DownloadPool(Singleton):
 
         logger.info("download pool shutdown complete")
 
-    def _sync_save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
-        gallery_path, scan_callback = make_gallery_path(
-            gallery_title=info["title"], gallery_language=info["language"], cache=True
-        )
+    def _sync_save_cbz(
+        self, info: NhentaiGallery, gallery_path: Path, remove_images: bool = True
+    ):
+        # gallery_path, scan_callback = make_gallery_path(
+        #     gallery_title=info["title"], gallery_language=info["language"], cache=True
+        # )
         if not gallery_path.exists():
             logger.error("Gallery path does not exist: %s", gallery_path)
             return
@@ -276,18 +295,22 @@ class DownloadPool(Singleton):
                         img_file.unlink()
                 img_dir.rmdir()
 
-        scan_callback()
-
     async def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
         loop = asyncio.get_running_loop()
+        gallery_path, scan_callback = make_gallery_path(
+            gallery_title=info["title"], gallery_language=info["language"], cache=True
+        )
         await loop.run_in_executor(
             self._executor,
             self._sync_save_cbz,
             info,
+            gallery_path,
             remove_images,
         )
 
-    async def add(self, info: "NhentaiGallery"):
+        await asyncio.to_thread(scan_callback)
+
+    async def add(self, info: NhentaiGallery):
         """Submit a download task for the given gallery information."""
         gallery_id = info["id"]
 

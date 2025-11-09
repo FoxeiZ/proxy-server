@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -102,7 +103,8 @@ async def proxy(url: str) -> Response:
             )
 
         try:
-            html_content = modify_html_content(
+            html_content = await asyncio.to_thread(
+                modify_html_content,
                 request_url=request.url,
                 page_url=str(response.url),
                 html_content=response.text,
@@ -127,7 +129,11 @@ async def proxy(url: str) -> Response:
         )
 
     elif "application/javascript" in content_type:
-        modified_js = modify_js_content(request.url, response.text)
+        modified_js = await asyncio.to_thread(
+            modify_js_content,
+            request.url,
+            response.text,
+        )
         return Response(
             modified_js,
             headers=dict(headers),

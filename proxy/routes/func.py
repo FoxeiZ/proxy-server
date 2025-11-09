@@ -50,7 +50,7 @@ async def add(_id: int):
             "gallery_id": _id,
         }, 200
 
-    pool.add(info)
+    await pool.add(info)
 
     return {
         "message": "Download started",
@@ -62,20 +62,21 @@ async def add(_id: int):
 @bp.route("/progress/<int:gallery_id>", methods=["GET"])
 async def get_progress(gallery_id: int):
     """Get download progress for a specific gallery."""
-    progress = pool.get_progress(gallery_id)
+    progress_ctx = await pool.get_progress(gallery_id)
 
-    if not progress:
+    if not progress_ctx:
         return {"error": "No download progress found for this gallery"}, 404
 
-    return {
-        "gallery_id": progress.gallery_id,
-        "total_images": progress.total_images,
-        "downloaded_images": progress.downloaded_images,
-        "failed_images": progress.failed_images,
-        "status": progress.status.value,
-        "progress_percentage": progress.progress_percentage,
-        "is_complete": progress.is_complete,
-    }
+    async with progress_ctx as progress:
+        return {
+            "gallery_id": progress.gallery_id,
+            "total_images": progress.total_images,
+            "downloaded_images": progress.downloaded_images,
+            "failed_images": progress.failed_images,
+            "status": progress.status.value,
+            "progress_percentage": progress.progress_percentage,
+            "is_complete": progress.is_complete,
+        }
 
 
 @bp.route("/cancel/<int:gallery_id>", methods=["GET"])
