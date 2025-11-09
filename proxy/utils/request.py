@@ -426,8 +426,8 @@ class Requests(Singleton, HttpXScraper):
 
         cookies = headers.pop("Cookie", None)
         if cookies:
-            print("Setting cookies from headers:", cookies)
-            print("Cookies from self.cookies:", self.cookies)
+            # print("Setting cookies from headers:", cookies)
+            # print("Cookies from self.cookies:", self.cookies)
             cookie = SimpleCookie(cookies)
             for key, morsel in cookie.items():
                 existing_cookies = [

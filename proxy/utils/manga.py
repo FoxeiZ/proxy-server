@@ -848,12 +848,10 @@ def check_file_status(
 ) -> FileStatus:
     """Check if a gallery is already downloaded based on its ID and title."""
     if not gallery_path:
-        if not gallery_language:
+        if not gallery_language or not gallery_title:
             raise ValueError(
-                "gallery_language must be provided if gallery_path is not."
+                "gallery_language and gallery_title must be provided if gallery_path is not."
             )
-        if not gallery_title:
-            raise ValueError("gallery_title must be provided if gallery_path is not.")
         gallery_path = make_gallery_path(
             gallery_title=gallery_title, gallery_language=gallery_language
         )
@@ -861,47 +859,69 @@ def check_file_status(
     result = _check_file_status(
         gallery_id, gallery_path, gallery_title, gallery_language
     )
-    if result == FileStatus.NOT_FOUND and gallery_title and gallery_language:
-        main_title = gallery_title["main_title"]
-        clean_title = remove_special_characters(main_title).lower()
 
-        all_languages = ("english", "japanese", "chinese")
-        other_languages = [lang for lang in all_languages if lang != gallery_language]
-
-        for other_lang in other_languages:
-            if GalleryScanner.contains(other_lang, clean_title):
-                return FileStatus.IN_DIFF_LANG
-
-            if GalleryScanner.contains(other_lang, main_title.lower()):
-                return FileStatus.IN_DIFF_LANG
+    if (
+        result == FileStatus.NOT_FOUND
+        and gallery_title
+        and gallery_language
+        and _check_other_languages(gallery_title, gallery_language)
+    ):
+        return FileStatus.IN_DIFF_LANG
 
     return result
 
 
-def check_file_status_gallery(
-    gallery_info: NhentaiGallery,
-) -> FileStatus:
+def check_file_status_gallery(gallery_info: NhentaiGallery) -> FileStatus:
     """Check if a gallery is already downloaded based on its information."""
     gallery_path = make_gallery_path(
         gallery_title=gallery_info["title"], gallery_language=gallery_info["language"]
     )
-    if not gallery_path.exists():
-        return FileStatus.NOT_FOUND
 
-    ret = _check_file_status(
+    result = _check_file_status(
         gallery_info["id"],
         gallery_path=gallery_path,
         gallery_title=gallery_info["title"],
         gallery_language=gallery_info["language"],
     )
-    if ret == FileStatus.MISSING and gallery_path.exists() and gallery_path.is_dir():
-        expected_files = tuple(
-            f"{img_idx}.{IMAGE_TYPE_MAPPING.get(image['t'], 'jpg')}"
+
+    if result == FileStatus.MISSING and gallery_path.exists() and gallery_path.is_dir():
+        expected_files = [
+            gallery_path / f"{img_idx}.{IMAGE_TYPE_MAPPING.get(image['t'], 'jpg')}"
             for img_idx, image in enumerate(gallery_info["images"]["pages"], start=1)  # type: ignore
-        )
-        result = tuple((gallery_path / name).exists() for name in expected_files)
-        if all(result):
-            return FileStatus.COMPLETED
-        elif any(result):
+        ]
+
+        if any(f.exists() for f in expected_files):
             return FileStatus.MISSING
-    return ret
+        elif all(f.exists() for f in expected_files):
+            return FileStatus.COMPLETED
+
+    elif (
+        result == FileStatus.NOT_FOUND
+        and gallery_info["title"]
+        and gallery_info["language"]
+        and _check_other_languages(gallery_info["title"], gallery_info["language"])
+    ):
+        return FileStatus.IN_DIFF_LANG
+
+    return result
+
+
+def _check_other_languages(
+    gallery_title: ParsedMangaTitle, current_language: str
+) -> bool:
+    """Helper function to check if gallery exists in other languages."""
+    main_title = gallery_title["main_title"]
+    clean_title = remove_special_characters(main_title).lower()
+    main_title_lower = main_title.lower()
+
+    other_languages = [
+        lang for lang in ("english", "japanese", "chinese") if lang != current_language
+    ]
+
+    for lang in other_languages:
+        if GalleryScanner.contains(lang, clean_title) or GalleryScanner.contains(
+            lang, main_title_lower
+        ):
+            return True
+
+    return False
