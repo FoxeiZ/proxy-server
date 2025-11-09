@@ -426,9 +426,16 @@ class Requests(Singleton, HttpXScraper):
 
         cookies = headers.pop("Cookie", None)
         if cookies:
+            print("Setting cookies from headers:", cookies)
+            print("Cookies from self.cookies:", self.cookies)
             cookie = SimpleCookie(cookies)
             for key, morsel in cookie.items():
-                if key not in self.cookies:
+                existing_cookies = [
+                    c
+                    for c in self.cookies.jar
+                    if c.name == key and c.domain == url._uri_reference.netloc
+                ]
+                if not existing_cookies:
                     self.cookies.set(
                         key,
                         morsel.value,
