@@ -790,6 +790,8 @@ def make_gallery_path(
 def _check_file_status(
     gallery_id: int,
     gallery_path: Path,
+    gallery_title: ParsedMangaTitle | None = None,
+    gallery_language: str | None = None,
 ) -> FileStatus:
     if not gallery_path.exists():
         return FileStatus.NOT_FOUND
@@ -800,6 +802,18 @@ def _check_file_status(
 
     gallery_path = gallery_path / str(gallery_id)
     if not gallery_path.exists():
+        if gallery_title and gallery_language:
+            main_title = gallery_title["main_title"]
+            clean_title = remove_special_characters(main_title).lower()
+
+            matched = GalleryScanner.fuzzy_contains(
+                gallery_language, clean_title, match_threshold=0.55
+            )
+
+            for _, gallery_dir in matched:
+                if gallery_dir.files:
+                    return FileStatus.AVAILABLE
+
         return FileStatus.NOT_FOUND
 
     return FileStatus.MISSING
@@ -844,7 +858,24 @@ def check_file_status(
             gallery_title=gallery_title, gallery_language=gallery_language
         )
 
-    return _check_file_status(gallery_id, gallery_path)
+    result = _check_file_status(
+        gallery_id, gallery_path, gallery_title, gallery_language
+    )
+    if result == FileStatus.NOT_FOUND and gallery_title and gallery_language:
+        main_title = gallery_title["main_title"]
+        clean_title = remove_special_characters(main_title).lower()
+
+        all_languages = ("english", "japanese", "chinese")
+        other_languages = [lang for lang in all_languages if lang != gallery_language]
+
+        for other_lang in other_languages:
+            if GalleryScanner.contains(other_lang, clean_title):
+                return FileStatus.IN_DIFF_LANG
+
+            if GalleryScanner.contains(other_lang, main_title.lower()):
+                return FileStatus.IN_DIFF_LANG
+
+    return result
 
 
 def check_file_status_gallery(
@@ -857,7 +888,12 @@ def check_file_status_gallery(
     if not gallery_path.exists():
         return FileStatus.NOT_FOUND
 
-    ret = _check_file_status(gallery_info["id"], gallery_path=gallery_path)
+    ret = _check_file_status(
+        gallery_info["id"],
+        gallery_path=gallery_path,
+        gallery_title=gallery_info["title"],
+        gallery_language=gallery_info["language"],
+    )
     if ret == FileStatus.MISSING and gallery_path.exists() and gallery_path.is_dir():
         expected_files = tuple(
             f"{img_idx}.{IMAGE_TYPE_MAPPING.get(image['t'], 'jpg')}"

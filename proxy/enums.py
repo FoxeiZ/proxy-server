@@ -15,3 +15,6 @@ class FileStatus(Enum):
     COMPLETED = "completed"
     MISSING = "missing"
     NOT_FOUND = "not_found"
+    IN_DIFF_LANG = "in_diff_lang"
+    AVAILABLE = "available"
+    PLACEHOLDER = "placeholder"

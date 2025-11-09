@@ -209,9 +209,16 @@ async def modify_chapter(
             attrs["class"] = "btn btn-primary btn-disabled"
             button_icon = "fa fa-spinner fa-spin"
         else:
-            button_text = "Add"
+            if file_status == FileStatus.IN_DIFF_LANG:
+                button_text = "In Different Language | Add"
+                hint_text = "Already in library in different language"
+            elif file_status == FileStatus.AVAILABLE:
+                button_text = "Available in library | Add"
+                hint_text = "Available in the same language in library"
+            else:
+                button_text = "Add"
+                hint_text = "Click to add to download queue"
             button_icon = "fa fa-plus"
-            hint_text = "Click to add to download queue"
             attrs["onclick"] = f"addGallery(event, {gallery_id});"
 
         _a = soup.new_tag("a", attrs=attrs)
@@ -332,6 +339,12 @@ def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
             _div.string = "Converted"
         elif file_status == FileStatus.COMPLETED:
             _div.string = "Downloaded"
+        elif file_status == FileStatus.IN_DIFF_LANG:
+            _div.string = "In different language"
+            _div["style"] += "color: yellow;"
+        elif file_status == FileStatus.AVAILABLE:
+            _div.string = "Available"
+            _div["style"] += "color: greenyellow;"
         elif file_status == FileStatus.MISSING:
             _div.string = "Partial | In library"
         a.append(_div)
