@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
-import threading
 import time
 import zipfile
 from dataclasses import dataclass
@@ -11,7 +11,7 @@ from datetime import datetime
 from difflib import SequenceMatcher
 from itertools import islice
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Self, TypeVar, overload
+from typing import TYPE_CHECKING, Callable, Coroutine, Self, TypeVar, overload
 
 from ..config import Config
 from ..enums import FileStatus
@@ -92,8 +92,9 @@ V = TypeVar("V")
 
 class AutoDiscard[T, V]:
     _instances: set[Self] = set()
-    _lock = threading.Lock()
-    _thread_started = False
+    _lock = asyncio.Lock()
+    _task_started = False
+    _task: asyncio.Task | None = None
     _sleeping_time: int = 60
     _logger = get_logger("AutoDiscard")
 
@@ -108,10 +109,9 @@ class AutoDiscard[T, V]:
         self._threshold = threshold
         self._last_access = time.time()
 
-        with self._lock:
-            self._instances.add(self)
-            if not self._thread_started:
-                self._start_thread()
+        self._instances.add(self)
+        if not self._task_started or not self._task:
+            self._start_background_task()
 
     @property
     def threshold(self) -> int:
@@ -121,11 +121,11 @@ class AutoDiscard[T, V]:
     def last_access(self) -> float:
         return self._last_access
 
-    def get(self) -> V | None:
-        with self._lock:
+    async def get(self) -> V | None:
+        async with self._lock:
             if self not in self._instances:
                 self._logger.debug(
-                    "Instance %s/%d not found in AutoDiscard instances.",
+                    "instance %s/%d not found in AutoDiscard instances.",
                     self,
                     id(self),
                 )
@@ -134,7 +134,7 @@ class AutoDiscard[T, V]:
         self._last_access = time.time()
         return getattr(self._target, self._attr)
 
-    def set(self, value: V) -> None:
+    async def set(self, value: V) -> None:
         self._last_access = time.time()
         setattr(self._target, self._attr, value)
 
@@ -142,26 +142,26 @@ class AutoDiscard[T, V]:
         setattr(self._target, self._attr, None)
 
     @classmethod
-    def _start_thread(cls) -> None:
-        if cls._thread_started:
+    def _start_background_task(cls) -> None:
+        if cls._task_started and cls._task:
             return
-        cls._thread_started = True
+        cls._task_started = True
 
-        def run():
-            cls._logger.info("AutoDiscard thread started.")
-            time.sleep(
+        async def run():
+            cls._logger.info("AutoDiscard task started.")
+            await asyncio.sleep(
                 cls._sleeping_time
             )  # wait for the first run to avoid immediate discard
             while True:
-                time.sleep(cls._sleeping_time)
+                await asyncio.sleep(cls._sleeping_time)
                 total_instances = len(cls._instances)
                 if total_instances == 0:
-                    cls._logger.info("No instances to discard.")
+                    cls._logger.info("no instances to discard.")
                     continue
 
                 total_discarded = 0
                 now = time.time()
-                with cls._lock:
+                async with cls._lock:
                     for inst in list(cls._instances):
                         if (
                             getattr(inst._target, inst._attr, None) is not None
@@ -174,11 +174,21 @@ class AutoDiscard[T, V]:
 
                 if total_discarded > 0:
                     cls._logger.info(
-                        "Discarded %d/%d instances.", total_discarded, total_instances
+                        "discarded %d/%d instances.", total_discarded, total_instances
                     )
 
-        t = threading.Thread(target=run, daemon=True, name="AutoDiscardThread")
-        t.start()
+        cls._task = asyncio.create_task(run(), name="AutoDiscardThread")
+
+    def shutdown(self):
+        self._logger.info(
+            "Shutting down AutoDiscard instance %s/%d.",
+            self,
+            id(self),
+        )
+        self._instances.clear()
+        if self._task:
+            self._task.cancel()
+            self._task = None
 
     def __del__(self):
         self._logger.warning(
@@ -187,8 +197,8 @@ class AutoDiscard[T, V]:
             self,
             id(self),
         )
-        with self._lock:
-            self._instances.discard(self)
+        # This is acceptable as __del__ shouldn't be called during normal operation
+        self._instances.discard(self)
 
 
 class GalleryCbzFile:
@@ -209,15 +219,12 @@ class GalleryCbzFile:
         self._info: ComicInfoDict | None = None
         self._pages: list[CbzPage] | None = None
         self._pages_discard: AutoDiscard[Self, list[CbzPage]] | None = None
+        self._force_extract: bool = force_extract
 
-        if force_extract:
-            self._extract()
-
-    @property
-    def info(self) -> ComicInfoDict:
+    async def get_info(self) -> ComicInfoDict:
         """Get the info dictionary."""
-        if self._info is None:
-            self._info = self._extract_info()
+        if self._info is None or self._force_extract:
+            self._info = await self._extract_info()
         return self._info
 
     @property
@@ -227,53 +234,58 @@ class GalleryCbzFile:
             self._thumbnail_dir.mkdir(parents=True, exist_ok=True)
         return self._thumbnail_dir
 
-    @property
-    def thumbnail(self) -> Path:
+    async def get_thumbnail(self) -> Path:
         """Get the thumbnail image path."""
         if self._thumbnail is None:
             thumb = next(self.thumbnail_dir.glob(f"{self.id}.*"), None)
             if thumb is None:
-                thumb = self._extract_thumbnail()
+                thumb = await self._extract_thumbnail()
             self._thumbnail = thumb
         return self._thumbnail
 
-    @property
-    def pages(self) -> list[CbzPage]:
+    async def get_pages(self) -> list[CbzPage]:
         """Get the list of pages in the CBZ file."""
         if self._pages_discard is None:
             self._pages_discard = AutoDiscard(self, "_pages", threshold=600)
 
         if self._pages is None:
-            self._pages = self._extract_pages()
-            self._pages_discard.set(self._pages)
+            self._pages = await self._extract_pages()
+            await self._pages_discard.set(self._pages)
 
-        return self._pages_discard.get()  # type: ignore[return-value]
+        return await self._pages_discard.get() or []
 
-    def read_page(self, page: int) -> CbzPage:
-        if not (1 <= page <= len(self.pages)):
+    async def read_page(self, page: int) -> CbzPage:
+        pages = await self.get_pages()
+        if not (1 <= page <= len(pages)):
             raise ValueError(f"Page {page} is out of range for this CBZ file.")
-        return self.pages[page - 1]
+        return pages[page - 1]
 
-    def _extract(self, only_if_missing: bool = True, force: bool = False) -> None:
+    async def _extract(self, only_if_missing: bool = True, force: bool = False) -> None:
         """Extract necessary files from the archive. Only called if all the files are missing."""
         if not self.path.exists():
             raise FileNotFoundError(f"File {self.path} does not exist.")
 
+        thumbnail = await self.get_thumbnail()
         if (
             (only_if_missing and not force)
             and self._info_file.exists()
-            and self.thumbnail.exists()
+            and thumbnail.exists()
         ):
             return
 
-        with zipfile.ZipFile(self.path, "r") as zip_file:
+        zip_file = await asyncio.to_thread(zipfile.ZipFile, self.path, "r")
+        try:
             if not self._info_file.exists():
-                self._extract_info(zip_file=zip_file)
+                await self._extract_info(zip_file=zip_file)
 
-            if not self.thumbnail.exists():
-                self._extract_thumbnail(zip_file=zip_file)
+            if not thumbnail.exists():
+                await self._extract_thumbnail(zip_file=zip_file)
+        finally:
+            await asyncio.to_thread(zip_file.close)
 
-    def _extract_thumbnail(self, *, zip_file: zipfile.ZipFile | None = None) -> Path:
+    async def _extract_thumbnail(
+        self, *, zip_file: zipfile.ZipFile | None = None
+    ) -> Path:
         """Extract the first image from the CBZ file as a thumbnail."""
         if self._thumbnail:
             return self._thumbnail
@@ -285,13 +297,16 @@ class GalleryCbzFile:
         if not zip_file:
             if not self.path.exists():
                 raise FileNotFoundError(f"File {self.path} does not exist.")
-            zip_file = zipfile.ZipFile(self.path, "r")
+            zip_file = await asyncio.to_thread(zipfile.ZipFile, self.path, "r")
             zip_close = True
 
-        namelist = zip_file.namelist()
-        names = sorted(
-            name for name in namelist if name.endswith(SUPPORTED_IMAGE_TYPES)
-        )
+        def _get_names():
+            namelist = zip_file.namelist()
+            return sorted(
+                name for name in namelist if name.endswith(SUPPORTED_IMAGE_TYPES)
+            )
+
+        names = await asyncio.to_thread(_get_names)
         if not names:
             raise FileNotFoundError(
                 f"No supported image files found in {self.path}. Supported types: {SUPPORTED_IMAGE_TYPES}"
@@ -299,71 +314,100 @@ class GalleryCbzFile:
 
         p = Path(names[0])
         thumbnail_path = self.thumbnail_dir / f"{self.id}{p.suffix}"
-        with (
-            zip_file.open(names[0]) as source,
-            open(thumbnail_path, "wb") as target,
-        ):
-            target.write(source.read())
+
+        def _write_thumbnail():
+            with (
+                zip_file.open(names[0]) as source,
+                open(thumbnail_path, "wb") as target,
+            ):
+                target.write(source.read())
+
+        await asyncio.to_thread(_write_thumbnail)
 
         if zip_close:
-            zip_file.close()
+            await asyncio.to_thread(zip_file.close)
         return thumbnail_path
 
-    def _extract_info(
+    async def _extract_info(
         self, *, zip_file: zipfile.ZipFile | None = None
     ) -> ComicInfoDict:
         if self._info:
             return self._info
 
         if self._info_file.exists():
-            with open(self._info_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+
+            def _read_json():
+                with open(self._info_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+
+            return await asyncio.to_thread(_read_json)
 
         close_zip = False
         if not zip_file:
             if not self.path.exists():
                 raise FileNotFoundError(f"File {self.path} does not exist.")
-            zip_file = zipfile.ZipFile(self.path, "r")
+            zip_file = await asyncio.to_thread(zipfile.ZipFile, self.path, "r")
             close_zip = True
 
-        info: ComicInfoDict = {}
-        if "ComicInfo.xml" in zip_file.namelist():
-            with zip_file.open("ComicInfo.xml") as source:
-                xml_content = source.read().decode("utf-8")
-            comic_info = ComicInfoXML.from_string(xml_content)
-            info = comic_info.to_dict()
+        def _read_xml():
+            info: ComicInfoDict = {}
+            if "ComicInfo.xml" in zip_file.namelist():
+                with zip_file.open("ComicInfo.xml") as source:
+                    xml_content = source.read().decode("utf-8")
+                comic_info = ComicInfoXML.from_string(xml_content)
+                info = comic_info.to_dict()
+            return info
+
+        info = await asyncio.to_thread(_read_xml)
 
         if close_zip:
-            zip_file.close()
+            await asyncio.to_thread(zip_file.close)
 
         if info:
-            with open(self._info_file, "w", encoding="utf-8") as f:
-                json.dump(info, f, indent=4)
+
+            def _write_json():
+                with open(self._info_file, "w", encoding="utf-8") as f:
+                    json.dump(info, f, indent=4)
+
+            await asyncio.to_thread(_write_json)
             return info
 
         raise FileNotFoundError(
             f"No ComicInfo.xml found in {self.path}. Please ensure the file is a valid CBZ archive."
         )
 
-    def _extract_pages(self) -> list[CbzPage]:
+    async def _extract_pages(self) -> list[CbzPage]:
         if self._pages is not None:
             return self._pages
 
-        self._pages = []
-        with zipfile.ZipFile(self.path, "r") as zip_file:
-            namelist = zip_file.namelist()
-            namelist.remove("ComicInfo.xml")
-            pages = list(
-                CbzPage(n, zip_file.read(n))
-                for n in namelist
-                if n.endswith(SUPPORTED_IMAGE_TYPES)
-            )
-            self._pages = sorted(pages, key=lambda p: p.page)
+        def _read_pages():
+            with zipfile.ZipFile(self.path, "r") as zip_file:
+                namelist = zip_file.namelist()
+                namelist.remove("ComicInfo.xml")
+                pages = list(
+                    CbzPage(n, zip_file.read(n))
+                    for n in namelist
+                    if n.endswith(SUPPORTED_IMAGE_TYPES)
+                )
+                return sorted(pages, key=lambda p: p.page)
 
+        self._pages = await asyncio.to_thread(_read_pages)
         return self._pages
 
     def __len__(self) -> int:
-        return len(self.pages)
+        """
+        Note: This cannot be async, so it returns 0 if pages not loaded
+
+        #### Callers should use: len(await gallery.get_pages()) or `self.get_page_count()` instead
+        """
+        if self._pages is None:
+            return 0
+        return len(self._pages)
+
+    async def get_page_count(self) -> int:
+        """Get the number of pages in the CBZ file."""
+        pages = await self.get_pages()
+        return len(pages)
 
     def __eq__(self, value: object) -> bool:
         if not isinstance(value, GalleryCbzFile):
@@ -413,36 +457,43 @@ class _GalleryScanner:
             return True
         return (datetime.now() - self.last_scanned).total_seconds() > 3600
 
-    @property
-    def gallery_dirs(self) -> dict[_Language, dict[_TitleDir, list[GalleryCbzFile]]]:
+    async def gallery_dirs(
+        self,
+    ) -> dict[_Language, dict[_TitleDir, list[GalleryCbzFile]]]:
         """Get the scanned directories."""
         if self.should_scan:
-            self.scan(self.path)
+            await self.scan(self.path)
         return self._gallery_dirs
 
-    @property
-    def chapter_files(self) -> dict[int, GalleryCbzFile]:
+    async def chapter_files(self) -> dict[int, GalleryCbzFile]:
         """Get the scanned chapter files, relative to gallery dir."""
         if self.should_scan:
-            self.scan(self.path)
+            await self.scan(self.path)
         return self._chapter_files
 
-    def _scan_gallery_dir(self, path: str | Path) -> list[GalleryCbzFile]:
+    async def _scan_gallery_dir(self, path: str | Path) -> list[GalleryCbzFile]:
         path = Path(path)
         if not path.is_dir():
             return []
 
+        def _scan():
+            cbz_files_data = []
+            for entry in os.scandir(path):
+                if entry.is_file() and entry.name.endswith(".cbz"):
+                    cbz_files_data.append(entry.path)
+            return cbz_files_data
+
+        paths = await asyncio.to_thread(_scan)
         cbz_files = []
-        for entry in os.scandir(path):
-            if entry.is_file() and entry.name.endswith(".cbz"):
-                cbz = GalleryCbzFile(entry.path)
-                self._chapter_files[cbz.id] = cbz
-                cbz_files.append(cbz)
+        for entry_path in paths:
+            cbz = GalleryCbzFile(entry_path)
+            self._chapter_files[cbz.id] = cbz
+            cbz_files.append(cbz)
         return cbz_files
 
     def add_gallery_dir(
         self, lang: _Language, dir_name: _TitleDir
-    ) -> Callable[[], None]:
+    ) -> Callable[[], Coroutine]:
         """Only an entry for the directory for future use."""
         if lang not in self._gallery_dirs:
             self._gallery_dirs[lang] = {}
@@ -452,7 +503,7 @@ class _GalleryScanner:
 
         return lambda: self.scan_gallery_dir(lang, dir_name, sort=False)
 
-    def scan_gallery_dir(
+    async def scan_gallery_dir(
         self, lang: _Language, dir_name: _TitleDir, *, sort: bool = True
     ) -> None:
         """Add a scanned directory to the internal storage."""
@@ -463,13 +514,23 @@ class _GalleryScanner:
         if not dir_path.is_dir():
             return
 
-        chapter_files = self._scan_gallery_dir(dir_path)
+        chapter_files = await self._scan_gallery_dir(dir_path)
         if not chapter_files:
             self.remove_gallery_dir(lang, dir_name)
             return
-        chapter_files = sorted(
-            chapter_files, key=lambda g: g.info.get("number") or g.id or 0
-        )
+
+        async def _sort_info(
+            chapter_files: list[GalleryCbzFile],
+        ) -> list[GalleryCbzFile]:
+            infos = await asyncio.gather(*(g.get_info() for g in chapter_files))
+            gallery_info_pairs = list(zip(chapter_files, infos))
+            gallery_info_pairs.sort(
+                key=lambda pair: pair[1].get("number") or pair[0].id or 0
+            )
+            return [pair[0] for pair in gallery_info_pairs]
+
+        chapter_files = await _sort_info(chapter_files)
+        # chapter_files = sorted(chapter_files, key=lambda g: g.id or 0)
         self._gallery_dirs[lang][dir_name] = chapter_files
 
         if sort:
@@ -498,39 +559,57 @@ class _GalleryScanner:
         self._chapter_files.clear()
         self.last_scanned = None
 
-    def scan(self, path: Path) -> None:
+    async def scan(self, path: Path) -> None:
         """Scan the directory and store its path."""
         if not path.is_dir():
             return
 
         try:
-            for lang_entry in os.scandir(path):
-                le_name = lang_entry.name.lower()
-                if not lang_entry.is_dir() or le_name not in (
-                    "english",
-                    "japanese",
-                    "chinese",
-                ):
-                    continue
 
+            def _scan_languages():
+                entries = []
+                for lang_entry in os.scandir(path):
+                    le_name = lang_entry.name.lower()
+                    if lang_entry.is_dir() and le_name in (
+                        "english",
+                        "japanese",
+                        "chinese",
+                    ):
+                        entries.append((le_name, lang_entry.path))
+                return entries
+
+            lang_entries = await asyncio.to_thread(_scan_languages)
+
+            for le_name, le_path in lang_entries:
                 try:
-                    for sub_entry in os.scandir(lang_entry.path):
-                        se_name = sub_entry.name.lower()
-                        if not sub_entry.is_dir() or se_name.startswith("."):
-                            continue
+                    # Wrap subdirectory scanning
+                    def _scan_subdirs(lang_path):
+                        entries = []
+                        for sub_entry in os.scandir(lang_path):
+                            se_name = sub_entry.name.lower()
+                            if sub_entry.is_dir() and not se_name.startswith("."):
+                                entries.append((se_name, sub_entry.stat().st_mtime))
+                        return entries
+
+                    sub_entries = await asyncio.to_thread(_scan_subdirs, le_path)
+
+                    for se_name, mtime in sub_entries:
                         if se_name in self._gallery_dirs.get(le_name, {}):
                             if (
                                 self.last_scanned  # yes scanned
-                                and datetime.fromtimestamp(sub_entry.stat().st_mtime)
+                                and datetime.fromtimestamp(mtime)
                                 <= self.last_scanned  # and modification time is NOT greater than last scanned time
                             ):
                                 continue
-                        self.scan_gallery_dir(le_name, se_name, sort=False)
+                        await self.scan_gallery_dir(le_name, se_name, sort=False)
 
                 except (OSError, PermissionError):
                     continue  # skip dir if no access
         except (OSError, PermissionError):
-            if not any(entry.is_dir() for entry in os.scandir(path)):
+            has_dirs = await asyncio.to_thread(
+                lambda: any(entry.is_dir() for entry in os.scandir(path))
+            )
+            if not has_dirs:
                 raise FileNotFoundError(f"No directories found in {path}.")
             if not self._gallery_dirs:
                 raise FileNotFoundError(f"No galleries found in {path}.")
@@ -542,25 +621,29 @@ class _GalleryScanner:
 
         self.last_scanned = datetime.now()
 
-    def contains(self, lang: _Language, dir_name: _TitleDir) -> _GalleryDir | None:
+    async def contains(
+        self, lang: _Language, dir_name: _TitleDir
+    ) -> _GalleryDir | None:
         """Check if the scanned directories contain a specific file."""
-        if lang not in self.gallery_dirs:
+        gallery_dirs = await self.gallery_dirs()
+        if not gallery_dirs or lang not in gallery_dirs:
             return None
 
         for dir_name_variant in (dir_name, dir_name.lower()):
-            if gallery_dir := self.gallery_dirs[lang].get(dir_name_variant):
+            if gallery_dir := gallery_dirs[lang].get(dir_name_variant):
                 return _GalleryDir(
                     path=Path(self.path) / lang / dir_name_variant,
                     files=gallery_dir,
                 )
         return None
 
-    def fuzzy_contains(
+    async def fuzzy_contains(
         self, lang: _Language, dir_name: _TitleDir, match_threshold: float = 0.55
     ) -> list[tuple[float, _GalleryDir]]:
         """Check if the scanned directories contain a specific file (fuzzy match)."""
         matched: list[tuple[float, _GalleryDir]] = []
-        for gallery_dir, files in self.gallery_dirs.get(lang, dict()).items():
+        gallery_dirs = await self.gallery_dirs()
+        for gallery_dir, files in gallery_dirs.get(lang, dict()).items():
             sm = SequenceMatcher(
                 lambda x: x in ("-", "_"), gallery_dir.lower(), dir_name.lower()
             )
@@ -576,11 +659,12 @@ class _GalleryScanner:
                 )
         return sorted(matched, key=lambda x: x[0], reverse=True)
 
-    def get_gallery_paginate(
+    async def get_gallery_paginate(
         self, lang: _Language, limit: int = 20, page: int = 1
     ) -> _GalleryPaginate:
         """Get paginated gallery files for a specific language."""
-        galleries = self.gallery_dirs.get(lang, {})
+        gallery_dirs = await self.gallery_dirs()
+        galleries = gallery_dirs.get(lang, {})
         if not galleries:
             return _GalleryPaginate(page=page, limit=limit, galleries=[], total=0)
 
@@ -596,36 +680,37 @@ class _GalleryScanner:
             total=total,
         )
 
-    def get_chapter_file(self, gallery_id: int) -> GalleryCbzFile | None:
+    async def get_chapter_file(self, gallery_id: int) -> GalleryCbzFile | None:
         """Get a chapter file by its ID."""
-        return self.chapter_files.get(gallery_id)
+        return (await self.chapter_files()).get(gallery_id)
 
-    def get_gallery_series(self, name: str) -> list[GalleryCbzFile]:
+    async def get_gallery_series(self, name: str) -> list[GalleryCbzFile]:
         """Get a list of gallery files that match the series name."""
         if not name:
             return []
 
         name = name.lower().strip()
-        for _, dirs in self.gallery_dirs.items():
+        for _, dirs in (await self.gallery_dirs()).items():
             if series := dirs.get(name):
                 return series
 
         return []
 
-    def _get_relative(
+    async def _get_relative(
         self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
     ) -> tuple[list[GalleryCbzFile], int]:
         if not gallery and not gallery_id:
             raise ValueError
         if gallery_id:
-            gallery = self.get_chapter_file(gallery_id)
+            gallery = await self.get_chapter_file(gallery_id)
         if not gallery:
             raise ValueError
 
-        series_name = (gallery.info.get("folder") or "").lower().strip()
+        info = await gallery.get_info()
+        series_name = (info.get("folder") or "").lower().strip()
         if not series_name:
             raise ValueError
-        series = self.get_gallery_series(series_name)
+        series = await self.get_gallery_series(series_name)
         if not series or gallery not in series:
             raise ValueError
 
@@ -635,12 +720,12 @@ class _GalleryScanner:
         current_index = series.index(gallery)
         return series, current_index
 
-    def get_next_chapter(
+    async def get_next_chapter(
         self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
     ) -> GalleryCbzFile | None:
         """Get the next chapter file after the given gallery."""
         try:
-            series, current_index = self._get_relative(
+            series, current_index = await self._get_relative(
                 gallery=gallery, gallery_id=gallery_id
             )
             if current_index == -1 or current_index >= len(series) - 1:
@@ -649,12 +734,12 @@ class _GalleryScanner:
         except ValueError:
             return None
 
-    def get_prev_chapter(
+    async def get_prev_chapter(
         self, *, gallery: GalleryCbzFile | None = None, gallery_id: int | None = None
     ) -> GalleryCbzFile | None:
         """Get the previous chapter file before the given gallery."""
         try:
-            series, current_index = self._get_relative(
+            series, current_index = await self._get_relative(
                 gallery=gallery, gallery_id=gallery_id
             )
             if current_index <= 0:
@@ -727,7 +812,7 @@ def split_and_clean(content: str) -> list[str]:
     return [t.strip() for t in content.split("|") if t.strip()]
 
 
-def _make_gallery_path(
+async def _make_gallery_path(
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
 ) -> Path:
@@ -743,12 +828,12 @@ def _make_gallery_path(
 
     clean_title = remove_special_characters(main_title).lower()
     for path_variant in (clean_title, main_title.lower()):
-        gallery_dir = GalleryScanner.contains(gallery_language, path_variant)
+        gallery_dir = await GalleryScanner.contains(gallery_language, path_variant)
         if gallery_dir:
             return gallery_dir.path
 
-        matched = GalleryScanner.fuzzy_contains(
-            gallery_language, path_variant, match_threshold=0.58
+        matched = await GalleryScanner.fuzzy_contains(
+            gallery_language, path_variant, match_threshold=0.6
         )
         if matched:
             return matched[0][1].path
@@ -757,7 +842,7 @@ def _make_gallery_path(
 
 
 @overload
-def make_gallery_path(
+async def make_gallery_path(
     *,
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
@@ -766,28 +851,28 @@ def make_gallery_path(
 
 
 @overload
-def make_gallery_path(
+async def make_gallery_path(
     *,
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
     cache: Literal[True],
-) -> tuple[Path, Callable[[], None]]: ...
+) -> tuple[Path, Callable[[], Coroutine]]: ...
 
 
-def make_gallery_path(
+async def make_gallery_path(
     *,
     gallery_title: ParsedMangaTitle,
     gallery_language: str,
     cache: bool = False,
-) -> Path | tuple[Path, Callable[[], None]]:
+) -> Path | tuple[Path, Callable[[], Coroutine]]:
     """Create the gallery path based on the gallery information."""
-    ret = _make_gallery_path(gallery_title, gallery_language)
+    ret = await _make_gallery_path(gallery_title, gallery_language)
     if cache:
         return ret, GalleryScanner.add_gallery_dir(gallery_language, ret.name)
     return ret
 
 
-def _check_file_status(
+async def _check_file_status(
     gallery_id: int,
     gallery_path: Path,
     gallery_title: ParsedMangaTitle | None = None,
@@ -806,9 +891,10 @@ def _check_file_status(
             main_title = gallery_title["main_title"]
             clean_title = remove_special_characters(main_title).lower()
 
-            matched = GalleryScanner.fuzzy_contains(
-                gallery_language, clean_title, match_threshold=0.55
+            matched = await GalleryScanner.fuzzy_contains(
+                gallery_language, clean_title, match_threshold=0.9
             )
+            # print([f"{clean_title} / {a[0]}, {a[1].path}" for a in matched])
 
             for _, gallery_dir in matched:
                 if gallery_dir.files:
@@ -820,7 +906,7 @@ def _check_file_status(
 
 
 @overload
-def check_file_status(
+async def check_file_status(
     gallery_id: int,
     *,
     gallery_title: ParsedMangaTitle,
@@ -830,7 +916,7 @@ def check_file_status(
 
 
 @overload
-def check_file_status(
+async def check_file_status(
     gallery_id: int,
     *,
     gallery_path: Path,
@@ -839,7 +925,7 @@ def check_file_status(
 ) -> FileStatus: ...
 
 
-def check_file_status(
+async def check_file_status(
     gallery_id: int,
     *,
     gallery_title: ParsedMangaTitle | None = None,
@@ -852,11 +938,11 @@ def check_file_status(
             raise ValueError(
                 "gallery_language and gallery_title must be provided if gallery_path is not."
             )
-        gallery_path = make_gallery_path(
+        gallery_path = await make_gallery_path(
             gallery_title=gallery_title, gallery_language=gallery_language
         )
 
-    result = _check_file_status(
+    result = await _check_file_status(
         gallery_id, gallery_path, gallery_title, gallery_language
     )
 
@@ -864,20 +950,20 @@ def check_file_status(
         result == FileStatus.NOT_FOUND
         and gallery_title
         and gallery_language
-        and _check_other_languages(gallery_title, gallery_language)
+        and await _check_other_languages(gallery_title, gallery_language)
     ):
         return FileStatus.IN_DIFF_LANG
 
     return result
 
 
-def check_file_status_gallery(gallery_info: NhentaiGallery) -> FileStatus:
+async def check_file_status_gallery(gallery_info: NhentaiGallery) -> FileStatus:
     """Check if a gallery is already downloaded based on its information."""
-    gallery_path = make_gallery_path(
+    gallery_path = await make_gallery_path(
         gallery_title=gallery_info["title"], gallery_language=gallery_info["language"]
     )
 
-    result = _check_file_status(
+    result = await _check_file_status(
         gallery_info["id"],
         gallery_path=gallery_path,
         gallery_title=gallery_info["title"],
@@ -899,14 +985,16 @@ def check_file_status_gallery(gallery_info: NhentaiGallery) -> FileStatus:
         result == FileStatus.NOT_FOUND
         and gallery_info["title"]
         and gallery_info["language"]
-        and _check_other_languages(gallery_info["title"], gallery_info["language"])
+        and await _check_other_languages(
+            gallery_info["title"], gallery_info["language"]
+        )
     ):
         return FileStatus.IN_DIFF_LANG
 
     return result
 
 
-def _check_other_languages(
+async def _check_other_languages(
     gallery_title: ParsedMangaTitle, current_language: str
 ) -> bool:
     """Helper function to check if gallery exists in other languages."""
@@ -919,9 +1007,9 @@ def _check_other_languages(
     ]
 
     for lang in other_languages:
-        if GalleryScanner.contains(lang, clean_title) or GalleryScanner.contains(
-            lang, main_title_lower
-        ):
+        if await GalleryScanner.contains(
+            lang, clean_title
+        ) or await GalleryScanner.contains(lang, main_title_lower):
             return True
 
     return False

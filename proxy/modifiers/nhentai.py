@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import TYPE_CHECKING, List, Optional, cast
@@ -179,9 +178,7 @@ async def modify_chapter(
         return _a
 
     async def create_add():
-        file_status = await asyncio.to_thread(
-            check_file_status_gallery, gallery_info=gallery_data
-        )
+        file_status = await check_file_status_gallery(gallery_info=gallery_data)
         pool = DownloadPool()
         is_downloading = await pool.is_downloading(gallery_data["id"])
 
@@ -277,7 +274,7 @@ def modify_cf_chl(soup: BeautifulSoup) -> bool:
 
 
 @ModifyRule.add_html_rule(r"nhentai\.net")
-def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
+async def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
     logger.info("Modifying gallery page content")
     if modify_cf_chl(soup):
         raise NeedCSRF(
@@ -314,7 +311,7 @@ def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
             logger.warning("Invalid gallery ID found in the HTML content.")
             continue
 
-        file_status = check_file_status(
+        file_status = await check_file_status(
             gallery_id=int(gallery_id),
             gallery_title=gallery_title,
             gallery_language=language,

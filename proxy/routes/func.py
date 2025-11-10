@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING
 
 from quart import Blueprint
@@ -37,7 +36,7 @@ async def add(_id: int):
         if not info:
             return {"error": "Failed to parse gallery information"}, 500
 
-    file_status = await asyncio.to_thread(check_file_status_gallery, gallery_info=info)
+    file_status = await check_file_status_gallery(gallery_info=info)
     if file_status in [FileStatus.CONVERTED, FileStatus.COMPLETED]:
         return {
             "message": f"Gallery already {file_status.value}",

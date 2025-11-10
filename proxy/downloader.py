@@ -105,8 +105,7 @@ class DownloadPool(Singleton):
             async with progress_ctx.context_lock() as progress:
                 progress.status = DownloadStatus.DOWNLOADING
 
-            gallery_path, _ = await asyncio.to_thread(
-                make_gallery_path,
+            gallery_path, _ = await make_gallery_path(
                 gallery_title=info["title"],
                 gallery_language=gallery_language,
                 cache=True,
@@ -188,7 +187,7 @@ class DownloadPool(Singleton):
             await self._on_download_image_complete(gallery_id)
             return
 
-        def chunked_write(fp: Path, chunk: Iterable[bytes]):
+        def _chunked_write(fp: Path, chunk: Iterable[bytes]):
             with open(fp, "wb") as f:
                 for data in chunk:
                     f.write(data)
@@ -204,7 +203,7 @@ class DownloadPool(Singleton):
                         async for chunk in response.aiter_bytes(chunk_size=8192):
                             chunks.append(chunk)
 
-                        await asyncio.to_thread(chunked_write, path, chunks)
+                        await asyncio.to_thread(_chunked_write, path, chunks)
 
                         logger.debug("successfully downloaded: %s", formatted_url)
                         await self._on_download_image_complete(gallery_id)
@@ -297,7 +296,7 @@ class DownloadPool(Singleton):
 
     async def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
         loop = asyncio.get_running_loop()
-        gallery_path, scan_callback = make_gallery_path(
+        gallery_path, scan_callback = await make_gallery_path(
             gallery_title=info["title"], gallery_language=info["language"], cache=True
         )
         await loop.run_in_executor(
@@ -307,17 +306,13 @@ class DownloadPool(Singleton):
             gallery_path,
             remove_images,
         )
-
-        await asyncio.to_thread(scan_callback)
+        await scan_callback()
 
     async def add(self, info: NhentaiGallery):
         """Submit a download task for the given gallery information."""
         gallery_id = info["id"]
 
-        file_status = await asyncio.to_thread(
-            check_file_status_gallery,
-            gallery_info=info,
-        )
+        file_status = await check_file_status_gallery(gallery_info=info)
         if file_status == FileStatus.CONVERTED:
             logger.info(
                 "gallery ID %d is already converted to CBZ, skipping download",

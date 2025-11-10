@@ -35,14 +35,16 @@ async def galleries_index():
     return await render_template(
         "nhentai/galleries.jinja2",
         page=page,
-        cbz_files=GalleryScanner.get_gallery_paginate(language, limit=limit, page=page),
+        cbz_files=await GalleryScanner.get_gallery_paginate(
+            language, limit=limit, page=page
+        ),
     )
 
 
 @bp.route("/series/<name>")
 async def gallery_series(name: str):
     """Gallery series page."""
-    series = GalleryScanner.get_gallery_series(name)
+    series = await GalleryScanner.get_gallery_series(name)
     if not series:
         return "", 404
     return await render_template(
@@ -54,7 +56,7 @@ async def gallery_series(name: str):
 @bp.route("chapter/<int:gallery_id>/")
 async def chapter_detail(gallery_id: int):
     """Gallery detail page."""
-    gallery = GalleryScanner.get_chapter_file(gallery_id)
+    gallery = await GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
     return await render_template("nhentai/chapter.jinja2", gallery=gallery)
@@ -63,19 +65,20 @@ async def chapter_detail(gallery_id: int):
 @bp.route("chapter/<int:gallery_id>/read")
 async def chapter_read(gallery_id: int):
     """Gallery detail page."""
-    gallery = GalleryScanner.get_chapter_file(gallery_id)
+    gallery = await GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
 
-    next_chapter = GalleryScanner.get_next_chapter(gallery=gallery)
-    prev_chapter = GalleryScanner.get_prev_chapter(gallery=gallery)
+    next_chapter = await GalleryScanner.get_next_chapter(gallery=gallery)
+    prev_chapter = await GalleryScanner.get_prev_chapter(gallery=gallery)
 
-    await asyncio.to_thread(lambda: gallery.pages)  # trigger lazy loading
+    pages = await gallery.get_pages()  # trigger lazy loading and get pages
+    info = await gallery.get_info()
     return await render_template(
         "nhentai/reader.jinja2",
-        info=gallery.info,
+        info=info,
         gallery_id=gallery_id,
-        total_pages=len(gallery),
+        total_pages=len(pages),
         next_chapter=next_chapter.id if next_chapter else None,
         prev_chapter=prev_chapter.id if prev_chapter else None,
     )
@@ -84,15 +87,16 @@ async def chapter_read(gallery_id: int):
 @bp.route("chapter/<int:gallery_id>/read/<int:page>")
 async def chapter_read_image(gallery_id: int, page: int):
     """Serve gallery chapter image."""
-    gallery = GalleryScanner.get_chapter_file(gallery_id)
+    gallery = await GalleryScanner.get_chapter_file(gallery_id)
     if not gallery:
         return "", 404
 
-    if page < 1 or page > len(gallery):
+    pages = await gallery.get_pages()
+    if page < 1 or page > len(pages):
         return "", 404
 
     try:
-        image = gallery.read_page(page)
+        image = await gallery.read_page(page)
         return Response(content_type=image.mime, response=image.data)
     except Exception:
         return "", 500
