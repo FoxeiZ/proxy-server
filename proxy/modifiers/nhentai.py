@@ -21,6 +21,8 @@ from ..utils import (
 from .base import ModifyRule
 
 if TYPE_CHECKING:
+    from typing import AsyncGenerator
+
     from .._types.nhentai import NhentaiGallery, NhentaiGalleryData
 
 
@@ -177,7 +179,27 @@ async def modify_chapter(
         _a.append(_i)
         return _a
 
-    async def create_add():
+    def _create_a(attrs, button_text, button_icon, hint_text=None) -> Tag:
+        _a = soup.new_tag("a", attrs=attrs)
+        _a.string = f"{button_text} "
+
+        _i = soup.new_tag(
+            "i",
+            attrs={"class": button_icon},
+        )
+        _a.append(_i)
+
+        if hint_text:
+            _top = soup.new_tag(
+                "div",
+                attrs={"class": "top"},
+            )
+            _top.append(soup.new_tag("i"))
+            _top.string = hint_text
+            _a.append(_top)
+        return _a
+
+    async def create_add() -> AsyncGenerator[Tag, None]:
         file_status = await check_file_status_gallery(gallery_info=gallery_data)
         pool = DownloadPool()
         is_downloading = await pool.is_downloading(gallery_data["id"])
@@ -207,36 +229,26 @@ async def modify_chapter(
             button_icon = "fa fa-spinner fa-spin"
         else:
             if file_status == FileStatus.IN_DIFF_LANG:
-                button_text = "In Different Language | Add"
-                hint_text = "Already in library in different language"
+                yield _create_a(
+                    attrs,
+                    "In Different Language",
+                    "fa fa-info-circle",
+                    "Already in library in different language",
+                )
             elif file_status == FileStatus.AVAILABLE:
-                button_text = "Available in library | Add"
-                hint_text = "Available in the same language in library"
-            else:
-                button_text = "Add"
-                hint_text = "Click to add to download queue"
+                yield _create_a(
+                    attrs,
+                    "Available",
+                    "fa fa-info-circle",
+                    "Available in the same language in library",
+                )
+
+            button_text = "Add"
+            hint_text = "Click to add to download queue"
             button_icon = "fa fa-plus"
             attrs["onclick"] = f"addGallery(event, {gallery_id});"
 
-        _a = soup.new_tag("a", attrs=attrs)
-        _a.string = f"{button_text} "
-
-        _i = soup.new_tag(
-            "i",
-            attrs={"class": button_icon},
-        )
-        _a.append(_i)
-
-        if hint_text:
-            _top = soup.new_tag(
-                "div",
-                attrs={"class": "top"},
-            )
-            _top.append(soup.new_tag("i"))
-            _top.string = hint_text
-            _a.append(_top)
-
-        return _a
+        yield _create_a(attrs, button_text, button_icon, hint_text)
 
     def create_image_proxy():
         _a = soup.new_tag(
@@ -257,10 +269,10 @@ async def modify_chapter(
         return _a
 
     btn_container.clear()
-    btn_container.append(await create_add())
+    btn_container.extend([_ async for _ in create_add()])
     btn_container.append(create_download())
     btn_container.append(soup.new_tag("br"))
-    btn_container.append(create_image_proxy())
+    # btn_container.append(create_image_proxy())
     logger.info("Modified button to download gallery.")
 
 
@@ -342,6 +354,9 @@ async def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
         elif file_status == FileStatus.AVAILABLE:
             _div.string = "Available"
             _div["style"] += "color: greenyellow;"
+        elif file_status == FileStatus.MAYBE_AVALIABLE:
+            _div.string = "Maybe available"
+            _div["style"] += "color: orange;"
         elif file_status == FileStatus.MISSING:
             _div.string = "Partial | In library"
         a.append(_div)
