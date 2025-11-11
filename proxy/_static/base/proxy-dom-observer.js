@@ -14,8 +14,10 @@
   const proxyConfig = {
     proxyBase: window.location.origin + "/",
     isProxyImages: (function () {
-      const urlParams = new URLSearchParams(window.location.search);
-      return urlParams.get("proxy_images") === "1";
+      const metaTag = document.querySelector('meta[name="x-proxy-image"]');
+      if (metaTag) {
+        return metaTag.content === "1";
+      }
     })(),
     baseHost: (function () {
       const path = window.location.pathname;
@@ -47,6 +49,7 @@
       "tel:",
       "..",
       "/p/",
+      "#",
       proxyConfig.proxyBase,
     ];
 

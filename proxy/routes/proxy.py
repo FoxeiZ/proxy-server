@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
-from quart import Blueprint, Response, render_template, request
+from quart import Blueprint, Response, redirect, render_template, request, session
 
 from ..errors import NeedCSRF
 from ..modifiers import modify_html_content, modify_js_content
@@ -37,12 +37,15 @@ def arg_to_bool(arg: str | None = None, default: bool = False) -> bool:
 
 
 @bp.route("/<path:url>", methods=["GET", "POST"])
-async def proxy(url: str) -> Response:
+async def proxy(url: str):
     """Fetches the specified URL and streams it out to the client.
     If the request was referred by the proxy itself (e.g. this is an image fetch
     for a previously proxied HTML page), then the original Referer is passed.
     """
-    is_proxy_images = arg_to_bool(request.args.get("proxy_images"), False)
+    proxy_images = request.args.get("proxy_images")
+    if proxy_images == "toggle":
+        session["proxy_images"] = not session.get("proxy_images", False)
+        return redirect(request.base_url or "/")
 
     if cached_response := rs_cache.get(url):
         return Response(
@@ -115,7 +118,7 @@ async def proxy(url: str) -> Response:
                 html_content=response.text,
                 base_url=response.url._uri_reference.netloc,
                 proxy_base=request.host_url,
-                is_proxy_images=is_proxy_images,
+                is_proxy_images=session.get("proxy_images", False),
             )
         except NeedCSRF as e:
             logger.warning("CSRF challenge detected for %s: %s", target_url, e)

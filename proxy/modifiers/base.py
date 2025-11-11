@@ -81,9 +81,7 @@ class ModifyRule(Singleton):
 
         return wrapper
 
-    def _proxy_image_toggle_html(
-        self, soup: BeautifulSoup, is_proxy_images: bool
-    ) -> None:
+    def _proxy_image_toggle_html(self, soup: BeautifulSoup) -> None:
         """Toggle for proxy_image request."""
         body = soup.find("body")
         if not body or not isinstance(body, Tag):
@@ -92,15 +90,13 @@ class ModifyRule(Singleton):
         button = soup.new_tag("button")
         button.string = "Toggle Proxy Images"
         button["style"] = "position: fixed; bottom: 0; right: 0;"
-        button[
-            "onclick"
-        ] = """window.location.href = window.location.href.includes('proxy_images=1')
-                    ? window.location.href.replace('proxy_images=1', '')
-                    : window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'proxy_images=1';"""
+        button["onclick"] = (
+            """window.location.href = window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'proxy_images=toggle';"""
+        )
 
         body.append(button)
 
-    def _inject_dom_observer(self, soup: BeautifulSoup, is_proxy_images: bool) -> None:
+    def _inject_dom_observer(self, soup: BeautifulSoup) -> None:
         """Inject DOM observer script for dynamic content handling."""
         # always inject DOM observer to handle lazy loading, regardless of proxy_images setting
         existing_scripts = soup.find_all("script", src=True)
@@ -133,8 +129,8 @@ class ModifyRule(Singleton):
     ) -> str:
         """Modify HTML content using registered rules."""
         try:
-            self._proxy_image_toggle_html(soup, is_proxy_images)
-            self._inject_dom_observer(soup, is_proxy_images)
+            self._proxy_image_toggle_html(soup)
+            self._inject_dom_observer(soup)
 
             for pattern, func in self.html_modifiers.items():
                 if re.search(pattern, page_url):
@@ -258,6 +254,19 @@ async def modify_html_content(
 
                 logger.debug("modified %s to: %s", url, tag[attr_name])
 
+        if soup.head:
+            meta_tag = soup.new_tag(
+                "meta",
+                attrs={
+                    "name": "x-proxy-image",
+                    "content": "1" if is_proxy_images else "0",
+                },
+            )
+            soup.head.insert(0, meta_tag)
+        else:
+            logger.warning(
+                "no <head> element found, cannot inject proxy image meta tag"
+            )
         return await ModifyRule().modify_html(
             page_url, soup, html_content, is_proxy_images
         )
