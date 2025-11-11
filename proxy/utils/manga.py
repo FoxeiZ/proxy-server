@@ -833,7 +833,7 @@ async def _make_gallery_path(
             return gallery_dir.path
 
         matched = await GalleryScanner.fuzzy_contains(
-            gallery_language, path_variant, match_threshold=0.6
+            gallery_language, path_variant, match_threshold=0.7
         )
         if matched:
             return matched[0][1].path
@@ -892,13 +892,15 @@ async def _check_file_status(
             clean_title = remove_special_characters(main_title).lower()
 
             matched = await GalleryScanner.fuzzy_contains(
-                gallery_language, clean_title, match_threshold=0.9
+                gallery_language, clean_title, match_threshold=0.78
             )
             # print([f"{clean_title} / {a[0]}, {a[1].path}" for a in matched])
 
-            for _, gallery_dir in matched:
+            for ratio, gallery_dir in matched:
                 if gallery_dir.files:
-                    return FileStatus.AVAILABLE
+                    if ratio >= 0.9:
+                        return FileStatus.AVAILABLE
+                    return FileStatus.MAYBE_AVALIABLE
 
         return FileStatus.NOT_FOUND
 
