@@ -242,6 +242,13 @@ async def modify_chapter(
                     "fa fa-info-circle",
                     "Available in the same language in library",
                 )
+            elif file_status == FileStatus.MAYBE_AVALIABLE:
+                yield _create_a(
+                    attrs,
+                    "Maybe Available",
+                    "fa fa-info-circle",
+                    "Might be available in library",
+                )
 
             button_text = "Add"
             hint_text = "Click to add to download queue"
@@ -381,7 +388,6 @@ def remove_ads(soup: BeautifulSoup) -> None:
             break
 
 
-@ModifyRule.add_js_rule(r"nhentai\.net/static/js/scripts.*\.js")
 def remove_tsyndicate_sdk(content: str) -> str:
     """Remove tsyndicate since its a ad script"""
     try:
@@ -392,3 +398,18 @@ def remove_tsyndicate_sdk(content: str) -> str:
     except Exception as e:
         logger.error("Failed to remove SDK script from JS content: %s", e)
         return content
+
+
+def replace_route(content: str):
+    return content.replace(
+        'p.route("/g/<int:id>/<int:page>/"',
+        'p.route("/p/nhentai.net/g/<int:id>/<int:page>/"',
+    )
+
+
+@ModifyRule.add_js_rule(r"nhentai\.net/static/js/scripts.*\.js")
+def modify_gallery_js(js_content: str, *args, **kwargs) -> str:
+    logger.info("Modifying gallery JS content")
+    js_content = remove_tsyndicate_sdk(js_content)
+    js_content = replace_route(js_content)
+    return js_content
