@@ -81,14 +81,16 @@ class ModifyRule(Singleton):
 
         return wrapper
 
-    def _proxy_image_toggle_html(self, soup: BeautifulSoup) -> None:
+    def _proxy_image_toggle_html(
+        self, soup: BeautifulSoup, toggle: bool = False
+    ) -> None:
         """Toggle for proxy_image request."""
         body = soup.find("body")
         if not body or not isinstance(body, Tag):
             return
 
         button = soup.new_tag("button")
-        button.string = "Toggle Proxy Images"
+        button.string = f"proxy_images={toggle}"
         button["style"] = "position: fixed; bottom: 0; right: 0;"
         button["onclick"] = (
             """window.location.href = window.location.href + (window.location.href.includes('?') ? '&' : '?') + 'proxy_images=toggle';"""
@@ -129,7 +131,7 @@ class ModifyRule(Singleton):
     ) -> str:
         """Modify HTML content using registered rules."""
         try:
-            self._proxy_image_toggle_html(soup)
+            self._proxy_image_toggle_html(soup, is_proxy_images)
             self._inject_dom_observer(soup)
 
             for pattern, func in self.html_modifiers.items():
