@@ -648,7 +648,35 @@ class _GalleryScanner:
                 lambda x: x in ("-", "_"), gallery_dir.lower(), dir_name.lower()
             )
             ratio = round(sm.ratio(), 2)
-            if ratio >= match_threshold:
+            if ratio < match_threshold:
+                continue
+
+            def _tokens(s: str) -> set[str]:
+                toks = re.split(r"\W+", s.lower())
+                toks = {t for t in toks if t and len(t) > 2}
+                stop = {
+                    "the",
+                    "and",
+                    "of",
+                    "vol",
+                    "volume",
+                    "chapter",
+                    "ch",
+                    "omake",
+                    "extra",
+                    "part",
+                }
+                return toks - stop
+
+            a_tokens = _tokens(gallery_dir)
+            b_tokens = _tokens(dir_name)
+            token_overlap = 0.0
+            if a_tokens or b_tokens:
+                inter = a_tokens & b_tokens
+                union = a_tokens | b_tokens
+                token_overlap = len(inter) / len(union) if union else 0.0
+
+            if ratio >= 0.9 or token_overlap >= 0.35:
                 matched.append(
                     (
                         ratio,
@@ -775,29 +803,33 @@ def remove_special_characters(text):
 
 
 def parse_manga_title(title: str) -> ParsedMangaTitle:
+    title = title.strip()
     pattern = r"^(.*?)(?:\s*[-+=]?(\d+)[-+=]?)?(?:\s*~([^~]+)~)?(?:\s*\|\s*(.+?)(?:\s*[-+=]?(\d+)[-+=]?)?)?$"
 
     match = re.match(pattern, title.strip())
     if match:
         main_title = match.group(1).strip()
         chapter_number_main: str | None = match.group(2)
-        chapter_title: str = match.group(3).strip() if match.group(3) else "Chapter"
         english_title: str | None = match.group(4).strip() if match.group(4) else None
+        chapter_title: str = (
+            match.group(3).strip()
+            if match.group(3)
+            else (english_title if english_title else main_title)
+        )
         chapter_number_end: str | None = match.group(5)
-
-        chapter_number = chapter_number_main or chapter_number_end or "1"
+        chapter_number = int(chapter_number_main or chapter_number_end or 1)
 
         return {
             "main_title": main_title,
-            "chapter_number": int(chapter_number),
+            "chapter_number": chapter_number,
             "chapter_title": chapter_title,
             "english_title": english_title,
         }
 
     return {
-        "main_title": title.strip(),
+        "main_title": title,
         "chapter_number": 1,
-        "chapter_title": "Chapter",
+        "chapter_title": title,
         "english_title": None,
     }
 
