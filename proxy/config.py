@@ -74,6 +74,12 @@ class ConfigSingleton(Singleton):
             default=10,
             help="maximum size in MB for a single cached item",
         )
+        parser.add_argument(
+            "--proxy",
+            dest="PROXY",
+            type=str,
+            help="Proxy server to use for outgoing requests (e.g., socks5h://)",
+        )
 
         args, _ = parser.parse_known_args()
         for key, value in vars(args).items():
@@ -91,6 +97,7 @@ class ConfigSingleton(Singleton):
             "CACHE_MAX_MEMORY_MB": 100,
             "CACHE_TTL_SECONDS": 3600,
             "CACHE_MAX_ITEM_SIZE_MB": 10,
+            "PROXY": None,
         }
 
         load_dotenv()
@@ -174,6 +181,11 @@ class ConfigSingleton(Singleton):
     def cache_max_item_size_mb(self) -> int:
         """Get the maximum size in MB for a single cached item."""
         return self._config.get("CACHE_MAX_ITEM_SIZE_MB", 10)
+
+    @property
+    def proxy(self) -> str | None:
+        """Get the proxy server to use for outgoing requests."""
+        return self._config.get("PROXY", None)
 
 
 Config = ConfigSingleton()
