@@ -2,17 +2,16 @@ import html
 import json
 import re
 import sys
-from contextlib import asynccontextmanager
 from copy import deepcopy
 from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Any, OrderedDict
 from urllib.parse import urlparse
 
-import httpx
 from cloudscraper import exceptions as cs_exceptions
 from cloudscraper.interpreters import JavaScriptInterpreter
 from cloudscraper.user_agent import User_Agent
+from curl_cffi.requests import AsyncSession, Response
 from requests.utils import cookiejar_from_dict
 
 from ..config import Config
@@ -26,7 +25,7 @@ class CloudflareCompat:
         self.cloudscraper = cloudscraper
 
     @staticmethod
-    def is_IUAM_Challenge(resp: httpx.Response) -> bool:
+    def is_IUAM_Challenge(resp: Response) -> bool:
         try:
             return (
                 resp.headers.get("Server", "").startswith("cloudflare")
@@ -49,7 +48,7 @@ class CloudflareCompat:
 
         return False
 
-    def is_New_IUAM_Challenge(self, resp: httpx.Response) -> bool:
+    def is_New_IUAM_Challenge(self, resp: Response) -> bool:
         try:
             return (
                 self.is_IUAM_Challenge(resp)
@@ -65,7 +64,7 @@ class CloudflareCompat:
 
         return False
 
-    def is_New_Captcha_Challenge(self, resp: httpx.Response) -> bool:
+    def is_New_Captcha_Challenge(self, resp: Response) -> bool:
         try:
             return (
                 self.is_Captcha_Challenge(resp)
@@ -82,7 +81,7 @@ class CloudflareCompat:
         return False
 
     @staticmethod
-    def is_Captcha_Challenge(resp: httpx.Response) -> bool:
+    def is_Captcha_Challenge(resp: Response) -> bool:
         try:
             return (
                 resp.headers.get("Server", "").startswith("cloudflare")
@@ -110,7 +109,7 @@ class CloudflareCompat:
         return False
 
     @staticmethod
-    def is_Firewall_Blocked(resp: httpx.Response) -> bool:
+    def is_Firewall_Blocked(resp: Response) -> bool:
         try:
             return (
                 resp.headers.get("Server", "").startswith("cloudflare")
@@ -129,7 +128,7 @@ class CloudflareCompat:
 
         return False
 
-    def is_Challenge_Request(self, resp: httpx.Response) -> bool:
+    def is_Challenge_Request(self, resp: Response) -> bool:
         if self.is_Firewall_Blocked(resp):
             self.cloudscraper.simpleException(
                 cs_exceptions.CloudflareCode1020,
@@ -153,7 +152,7 @@ class CloudflareCompat:
 
         return False
 
-    def IUAM_Challenge_Response(self, body: str, url: httpx.URL, interpreter: str):
+    def IUAM_Challenge_Response(self, body: str, url: str, interpreter: str):
         try:
             formPayload = re.search(
                 r'<form (?P<form>.*?="challenge-form" '
@@ -185,27 +184,28 @@ class CloudflareCompat:
             )
 
         try:
+            parsed_url = urlparse(url)
             payload["jschl_answer"] = JavaScriptInterpreter.dynamicImport(
                 interpreter
-            ).solveChallenge(body, url._uri_reference.netloc)
+            ).solveChallenge(body, parsed_url.netloc)
         except Exception as e:
             self.cloudscraper.simpleException(
                 cs_exceptions.CloudflareIUAMError,
                 f"Unable to parse Cloudflare anti-bots page: {getattr(e, 'message', e)}",
             )
 
+        parsed_url = urlparse(url)
         return {
-            "url": f"{url.scheme}://{url._uri_reference.netloc}{html.unescape(formPayload['challengeUUID'])}",
+            "url": f"{parsed_url.scheme}://{parsed_url.netloc}{html.unescape(formPayload['challengeUUID'])}",
             "data": payload,
         }
 
-    async def Challenge_Response(
-        self, resp: httpx.Response, **kwargs
-    ) -> httpx.Response:
+    async def Challenge_Response(self, resp: Response, **kwargs) -> Response:
         if self.is_Captcha_Challenge(resp):
             if self.cloudscraper.doubleDown:
+                request_method = getattr(resp, "_request_method", "GET")
                 resp = await self.cloudscraper.perform_request(
-                    resp.request.method, resp.url, **kwargs
+                    request_method, resp.url, **kwargs
                 )
 
             if not self.is_Captcha_Challenge(resp):
@@ -246,11 +246,12 @@ class CloudflareCompat:
                 cloudflare_kwargs, "data", submit_url["data"]
             )
 
+            parsed_resp_url = urlparse(resp.url)
             cloudflare_kwargs["headers"] = updateAttr(
                 cloudflare_kwargs,
                 "headers",
                 {
-                    "Origin": f"{resp.url.scheme}://{resp.url._uri_reference.netloc}",
+                    "Origin": f"{parsed_resp_url.scheme}://{parsed_resp_url.netloc}",
                     "Referer": str(resp.url),
                 },
             )
@@ -265,7 +266,8 @@ class CloudflareCompat:
                     "Invalid challenge answer detected, Cloudflare broken?",
                 )
 
-            if not challengeSubmitResponse.is_redirect:
+            is_redirect = 300 <= challengeSubmitResponse.status_code < 400
+            if not is_redirect:
                 return challengeSubmitResponse
 
             else:
@@ -276,21 +278,24 @@ class CloudflareCompat:
                     {"Referer": challengeSubmitResponse.url},
                 )
 
-                if not urlparse(challengeSubmitResponse.headers["Location"]).netloc:
-                    redirect_location = challengeSubmitResponse.url.join(
-                        challengeSubmitResponse.headers["Location"]
-                    )
+                location_header = challengeSubmitResponse.headers["Location"]
+                if not urlparse(location_header).netloc:
+                    parsed_submit_url = urlparse(challengeSubmitResponse.url)
+                    redirect_location = f"{parsed_submit_url.scheme}://{parsed_submit_url.netloc}{location_header}"
                 else:
-                    redirect_location = challengeSubmitResponse.headers["Location"]
+                    redirect_location = location_header
 
-                return await self.cloudscraper.request(
-                    resp.request.method, redirect_location, **cloudflare_kwargs
-                )
+                request_method = getattr(resp, "_request_method", "GET")
+                if redirect_location:
+                    return await self.cloudscraper.request(
+                        request_method, redirect_location, **cloudflare_kwargs
+                    )
 
-        return await self.cloudscraper.request(resp.request.method, resp.url, **kwargs)
+        request_method = getattr(resp, "_request_method", "GET")
+        return await self.cloudscraper.request(request_method, resp.url, **kwargs)
 
 
-class HttpXScraper(httpx.AsyncClient):
+class HttpXScraper(AsyncSession):
     def __init__(
         self,
         *args,
@@ -315,14 +320,11 @@ class HttpXScraper(httpx.AsyncClient):
         self._solveDepthCnt = 0
         self.solveDepth = kwargs.pop("solveDepth", 3)
 
-        super(HttpXScraper, self).__init__(*args, http2=True, **kwargs)
+        impersonate = kwargs.pop("impersonate", "chrome110")
+        super(HttpXScraper, self).__init__(*args, impersonate=impersonate, **kwargs)
 
-        self.headers.update(self.user_agent.headers or {})  # type: ignore
-
-    # compat
-    @property
-    def proxies(self):
-        return {}
+        if hasattr(self, "headers") and self.user_agent.headers:
+            self.headers.update(dict(self.user_agent.headers))  # type: ignore
 
     def simpleException(self, exception, msg):
         self._solveDepthCnt = 0
@@ -330,12 +332,13 @@ class HttpXScraper(httpx.AsyncClient):
         raise exception(msg)
 
     async def perform_request(self, method, url, *args, **kwargs):
-        return await super().request(method, url, *args, **kwargs)
+        response = await super().request(method, url, *args, **kwargs)
+        response._request_method = method
+        return response
 
-    async def request(
-        self, method: str, url: str | httpx.URL, *args, **kwargs
-    ) -> httpx.Response:
+    async def request(self, method: str, url: str, *args, **kwargs) -> Response:
         response = await self.perform_request(method, url, *args, **kwargs)
+        response._request_method = method
 
         cloudflare_challenge = CloudflareCompat(self)
         if cloudflare_challenge.is_Challenge_Request(response):
@@ -348,45 +351,11 @@ class HttpXScraper(httpx.AsyncClient):
 
             response = await cloudflare_challenge.Challenge_Response(response, **kwargs)
         else:
-            if not response.is_redirect and response.status_code not in (429, 503):
+            is_redirect = 300 <= response.status_code < 400
+            if not is_redirect and response.status_code not in (429, 503):
                 self._solveDepthCnt = 0
 
         return response
-
-    # TODO: check for missing read() before solving challenge. NOT WORKING YET
-    @asynccontextmanager
-    async def stream(self, method, url, **kwargs):
-        async with super().stream(method, url, **kwargs) as response:
-            cloudflare_challenge = CloudflareCompat(self)
-            if cloudflare_challenge.is_Challenge_Request(response):
-                if self._solveDepthCnt >= self.solveDepth:
-                    self.simpleException(
-                        cs_exceptions.CloudflareLoopProtection,
-                        f"!!Loop Protection!! We have tried to solve {self._solveDepthCnt} time(s) in a row.",
-                    )
-                self._solveDepthCnt += 1
-
-                # For challenges, we need to read the full response and handle it
-                # Then make a new request - streaming doesn't work well with challenge responses
-                await response.aread()  # Read the challenge response
-                challenge_response = await cloudflare_challenge.Challenge_Response(
-                    response, **kwargs
-                )
-
-                # Return the challenge response as a new stream if needed
-                if challenge_response != response:
-                    async with super().stream(
-                        challenge_response.request.method,
-                        challenge_response.url,
-                        **kwargs,
-                    ) as new_response:
-                        yield new_response
-                        return
-            else:
-                if not response.is_redirect and response.status_code not in (429, 503):
-                    self._solveDepthCnt = 0
-
-            yield response
 
 
 # class Requests(Singleton, CloudScraper):
@@ -399,6 +368,7 @@ class Requests(Singleton, HttpXScraper):
                 # "mobile": False,
                 "custom": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
             },
+            proxy=Config.proxy,
             delay=10,
             debug=False,
             interpreter="js2py",
@@ -409,7 +379,7 @@ class Requests(Singleton, HttpXScraper):
                 cookies_dict = json.load(f)
             cookiejar_from_dict(cookies_dict, cookiejar=self.cookies, overwrite=True)
 
-    def _clean_headers(self, url: httpx.URL | str, headers: dict[str, Any]) -> None:
+    def _clean_headers(self, url: str, headers: dict[str, Any]) -> None:
         """Remove headers that may cause issues with proxying."""
         headers.pop("Host", None)
         headers.pop("User-Agent", None)
@@ -421,8 +391,7 @@ class Requests(Singleton, HttpXScraper):
         headers.pop("X-Forwarded-For", None)
         headers.update({"Accept-Encoding": "identity"})
 
-        if isinstance(url, str):
-            url = httpx.URL(url)
+        parsed_url = urlparse(url)
 
         cookies = headers.pop("Cookie", None)
         if cookies:
@@ -433,14 +402,14 @@ class Requests(Singleton, HttpXScraper):
                 existing_cookies = [
                     c
                     for c in self.cookies.jar
-                    if c.name == key and c.domain == url._uri_reference.netloc
+                    if c.name == key and c.domain == parsed_url.netloc
                 ]
                 if not existing_cookies:
                     self.cookies.set(
                         key,
                         morsel.value,
-                        domain=url._uri_reference.netloc,
-                        path=url.path,
+                        domain=parsed_url.netloc,
+                        path=parsed_url.path,
                     )
 
     async def request(self, method, url, *args, **kwargs):
@@ -449,10 +418,3 @@ class Requests(Singleton, HttpXScraper):
                 self._clean_headers(url, headers)
 
         return await super().request(method, url, **kwargs)
-
-    def stream(self, method, url, **kwargs):
-        if headers := kwargs.get("headers"):
-            if isinstance(headers, dict):
-                self._clean_headers(url, headers)
-
-        return super().stream(method, url, **kwargs)

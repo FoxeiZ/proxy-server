@@ -148,7 +148,7 @@ class ModifyRule(Singleton):
                         if inspect.iscoroutine(result):
                             await result
                     except Exception as e:
-                        logger.error("error applying rule %s: %s", pattern, e)
+                        logger.exception("error applying rule %s: %s", pattern, e)
         except Exception as e:
             logger.error("error modifying HTML content: %s", e)
         return str(soup)

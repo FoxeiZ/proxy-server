@@ -5,7 +5,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-import httpx
+from curl_cffi.requests import RequestsError
 from quart import Blueprint, Response, redirect, render_template, request, session
 
 from ..errors import NeedCSRF
@@ -75,13 +75,16 @@ async def proxy(url: str):
             target_url,
             params=request.args,
             headers=dict(request.headers),
-            follow_redirects=True,
+            allow_redirects=True,
             data=request_data,
             timeout=10,
         )
-    except httpx.ConnectError as e:
+    except RequestsError as e:
         logger.error("connection error fetching %s: %s", target_url, e)
         return Response(f"connection error fetching {target_url}", status=502)
+    except Exception as e:
+        logger.error("unexpected error fetching %s: %s", target_url, e)
+        return Response(f"error fetching {target_url}", status=502)
 
     headers = response.headers.copy()
     headers.pop("Content-Encoding", None)
@@ -105,29 +108,34 @@ async def proxy(url: str):
                     return Response("invalid redirect path", status=400)
                 parts = parts._replace(netloc=split_paths[2])
 
+            path_str = str(parts.path) if parts.path else ""
+            query_str = str(parts.query) if parts.query else ""
+            fragment_str = str(parts.fragment) if parts.fragment else ""
             headers["Location"] = (
-                f"/p/{parts.netloc}/{parts.path.lstrip('/')}"
-                f"{'?' + parts.query if parts.query else ''}"
-                f"{'#' + parts.fragment if parts.fragment else ''}"
+                f"/p/{parts.netloc}/{path_str.lstrip('/')}"
+                f"{'?' + query_str if query_str else ''}"
+                f"{'#' + fragment_str if fragment_str else ''}"
             )
 
         try:
+            response_url_parsed = urlparse(response.url)
             html_content = await modify_html_content(
                 request_url=request.url,
                 page_url=str(response.url),
                 html_content=response.text,
-                base_url=response.url._uri_reference.netloc,
+                base_url=response_url_parsed.netloc,
                 proxy_base=request.host_url,
                 is_proxy_images=session.get("proxy_images", False),
             )
         except NeedCSRF as e:
             logger.warning("CSRF challenge detected for %s: %s", target_url, e)
+            response_url_parsed = urlparse(response.url)
             html_content = await render_template(
                 "csrf.jinja2",
                 error_message=str(e),
                 redirect_url=request.url,
                 problem_url=target_url,
-                netloc=response.url._uri_reference.netloc,
+                netloc=response_url_parsed.netloc,
             )
 
         return Response(
@@ -156,10 +164,11 @@ async def proxy(url: str):
         cache = BytesIO() if response.status_code == 200 else None
 
         try:
-            async for chunk in response.aiter_bytes(4096):
-                yield chunk
+            for content in response.iter_content(chunk_size=4096):
+                yield content
                 if cache:
-                    cache.write(chunk)
+                    cache.write(content)
+                await asyncio.sleep(0)  # allow event loop to process
 
             if cache:
                 cache.seek(0)
