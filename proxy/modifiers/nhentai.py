@@ -1,15 +1,16 @@
+# pyright: reportUnnecessaryIsInstance=false
 from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, List, Optional, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from bs4 import BeautifulSoup, Tag
 from quart import url_for
 
 from ..downloader import DownloadPool
 from ..enums import FileStatus
-from ..errors import NeedCSRF
+from ..errors import NeedCSRFError
 from ..utils import (
     GalleryInfoCache,
     check_file_status,
@@ -21,7 +22,7 @@ from ..utils import (
 from .base import ModifyRule
 
 if TYPE_CHECKING:
-    from typing import AsyncGenerator
+    from collections.abc import AsyncGenerator
 
     from .._types.nhentai import NhentaiGallery, NhentaiGalleryData
 
@@ -29,11 +30,11 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-def parse_tags_from_html(html: str) -> List[str]:
+def parse_tags_from_html(html: str) -> list[str]:
     """Parse tag names from HTML content, extracting tag names from class attributes."""
     try:
         soup = BeautifulSoup(html, "html.parser")
-        tags = []
+        tags: list[str] = []
         tag_links = soup.find_all("a", class_=re.compile(r"tag tag-\d+"))
 
         for tag_link in tag_links:
@@ -53,7 +54,7 @@ def parse_tags_from_html(html: str) -> List[str]:
         return []
 
 
-def parse_chapter(html: str) -> Optional[NhentaiGallery]:
+def parse_chapter(html: str) -> NhentaiGallery | None:
     """Parse HTML content to extract gallery information from JSON data and tag details from HTML."""
     pattern = re.compile(r"window\._gallery = JSON\.parse\(\"([^\"]+)\"\);")
     match = pattern.search(html)
@@ -78,11 +79,11 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
 
     # Process tags
     original_tags = gallery_data.get("tags", []).copy()
-    tags = []
-    artists = []
-    writers = []
-    parodies = []
-    characters = []
+    tags: list[str] = []
+    artists: list[str] = []
+    writers: list[str] = []
+    parodies: list[str] = []
+    characters: list[str] = []
     language = "english"  # default
     category = "manga"  # default
     translated = False
@@ -106,9 +107,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
         elif tag["type"] == "character":
             characters.extend(split_and_clean(tag["name"]))
         else:
-            logger.warning(
-                "unknown tag type: %s with name: %s", tag["type"], tag["name"]
-            )
+            logger.warning("unknown tag type: %s with name: %s", tag["type"], tag["name"])
 
     processed_gallery: NhentaiGallery = {
         "id": gallery_data["id"],
@@ -134,9 +133,7 @@ def parse_chapter(html: str) -> Optional[NhentaiGallery]:
 
 
 @ModifyRule.add_html_rule(r"/g/\d+")
-async def modify_chapter(
-    soup: BeautifulSoup, html_content: str, *, proxy_images: bool = False
-) -> None:
+async def modify_chapter(soup: BeautifulSoup, html_content: str, *, proxy_images: bool = False) -> None:
     """Modify nhentai chapter pages to add download functionality."""
     gallery_id_element = soup.find("h3", id="gallery_id")
     if not gallery_id_element:
@@ -157,9 +154,9 @@ async def modify_chapter(
     if not isinstance(btn_container, Tag):
         raise TypeError("Expected btn_container to be a BeautifulSoup Tag")
 
-    soup.head.append(  # type: ignore
-        soup.new_tag("script", src=url_for("static", filename="nhentai/mod.js"))
-    )
+    if not soup.head:
+        raise ValueError("head is None, cannot append script tag.")
+    soup.head.append(soup.new_tag("script", src=url_for("static", filename="nhentai/mod.js")))
 
     def create_download():
         _a = soup.new_tag(
@@ -179,7 +176,7 @@ async def modify_chapter(
         _a.append(_i)
         return _a
 
-    def _create_a(attrs, button_text, button_icon, hint_text=None) -> Tag:
+    def _create_a(attrs: dict[str, str], button_text: str, button_icon: str, hint_text: str | None = None) -> Tag:
         _a = soup.new_tag("a", attrs=attrs)
         _a.string = f"{button_text} "
 
@@ -257,23 +254,23 @@ async def modify_chapter(
 
         yield _create_a(attrs, button_text, button_icon, hint_text)
 
-    def create_image_proxy():
-        _a = soup.new_tag(
-            "a",
-            attrs={
-                "class": "btn btn-secondary",
-                "id": "image-proxy",
-                "href": f"/p/nhentai.net/g/{gallery_id}?proxy_images={'0' if not proxy_images else '1'}",
-            },
-        )
-        _a.string = "Image Proxy "
+    # def create_image_proxy():
+    #     _a = soup.new_tag(
+    #         "a",
+    #         attrs={
+    #             "class": "btn btn-secondary",
+    #             "id": "image-proxy",
+    #             "href": f"/p/nhentai.net/g/{gallery_id}?proxy_images={'0' if not proxy_images else '1'}",
+    #         },
+    #     )
+    #     _a.string = "Image Proxy "
 
-        _i = soup.new_tag(
-            "i",
-            attrs={"class": "fa fa-image"},
-        )
-        _a.append(_i)
-        return _a
+    #     _i = soup.new_tag(
+    #         "i",
+    #         attrs={"class": "fa fa-image"},
+    #     )
+    #     _a.append(_i)
+    #     return _a
 
     btn_container.clear()
     btn_container.extend([_ async for _ in create_add()])
@@ -287,18 +284,14 @@ def modify_cf_chl(soup: BeautifulSoup) -> bool:
     _title = soup.find("title")
     if not _title or not isinstance(_title, Tag):
         return False
-    if _title.string == "Just a moment...":
-        return True
-    return False
+    return _title.string == "Just a moment..."
 
 
 @ModifyRule.add_html_rule(r"nhentai\.net")
-async def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
+async def modify_gallery(soup: BeautifulSoup, *args: Any, **kwargs: Any) -> None:
     logger.info("Modifying gallery page content")
     if modify_cf_chl(soup):
-        raise NeedCSRF(
-            "Cloudflare challenge detected, CSRF token is required to proceed."
-        )
+        raise NeedCSRFError("Cloudflare challenge detected, CSRF token is required to proceed.")
 
     remove_ads(soup)
 
@@ -319,12 +312,10 @@ async def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
         else:
             language = "english"
 
-        if (not a or not isinstance(a, Tag)) or (
-            not caption or not isinstance(caption, Tag)
-        ):
+        if (not a or not isinstance(a, Tag)) or (not caption or not isinstance(caption, Tag)):
             continue
 
-        gallery_id = cast(str, a.get("href") or "").rstrip("/").split("/")[-1]
+        gallery_id = cast("str", a.get("href") or "").rstrip("/").split("/")[-1]
         gallery_title = clean_and_parse_title(caption.get_text(strip=True))
         if not gallery_id.isdigit():
             logger.warning("Invalid gallery ID found in the HTML content.")
@@ -343,7 +334,9 @@ async def modify_gallery(soup: BeautifulSoup, *args, **kwargs) -> None:
             )
             continue
 
-        a.img["style"] = "opacity: 0.7;"  # type: ignore
+        if not a.img or not isinstance(a.img, Tag):
+            continue
+        a.img["style"] = "opacity: 0.7;"
         _div = soup.new_tag(
             "div",
             attrs={
@@ -381,9 +374,7 @@ def remove_ads(soup: BeautifulSoup) -> None:
         if not isinstance(script, Tag):
             continue
         if script.string and "show_popunders: true" in script.string:
-            script.string = script.string.replace(
-                "show_popunders: true", "show_popunders: false"
-            )
+            script.string = script.string.replace("show_popunders: true", "show_popunders: false")
             logger.info("Disabled popunders in the script content.")
             break
 
@@ -392,9 +383,7 @@ def remove_tsyndicate_sdk(content: str) -> str:
     """Remove tsyndicate since its a ad script"""
     try:
         # Remove the specific SDK script
-        return re.sub(
-            r"https://cdn\.tsyndicate\.com/sdk/v1/[a-zA-Z\.]+\.js", "", content
-        )
+        return re.sub(r"https://cdn\.tsyndicate\.com/sdk/v1/[a-zA-Z\.]+\.js", "", content)
     except Exception as e:
         logger.error("Failed to remove SDK script from JS content: %s", e)
         return content
@@ -408,7 +397,7 @@ def replace_route(content: str):
 
 
 @ModifyRule.add_js_rule(r"nhentai\.net/static/js/scripts.*\.js")
-def modify_gallery_js(js_content: str, *args, **kwargs) -> str:
+def modify_gallery_js(js_content: str, *args: Any, **kwargs: Any) -> str:
     logger.info("Modifying gallery JS content")
     js_content = remove_tsyndicate_sdk(js_content)
     js_content = replace_route(js_content)

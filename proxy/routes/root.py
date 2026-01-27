@@ -90,9 +90,7 @@ async def csrf():
             cookies.set(key, simple_cookie[key].value, domain=netloc)
 
     cookies_dict = dict_from_cookiejar(cookies)
-    (Path(Config.cache_path) / "cookies.json").write_text(
-        json.dumps(cookies_dict), encoding="utf-8"
-    )
+    (Path(Config.cache_path) / "cookies.json").write_text(json.dumps(cookies_dict), encoding="utf-8")
 
     return redirect(redirect_url)
 

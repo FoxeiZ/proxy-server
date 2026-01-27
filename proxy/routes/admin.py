@@ -52,9 +52,7 @@ async def cache_cleanup():
     expired_count = cache.cleanup_expired()
     stats = cache.get_stats()
 
-    logger.info(
-        f"manual cache cleanup completed: removed {expired_count} expired entries"
-    )
+    logger.info(f"manual cache cleanup completed: removed {expired_count} expired entries")
 
     return jsonify(
         {

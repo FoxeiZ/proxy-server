@@ -1,11 +1,16 @@
+# ruff: noqa: N802, N803, N806
+# pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportArgumentType=information
+from __future__ import annotations
+
 import html
 import json
 import re
 import sys
+from collections import OrderedDict
 from copy import deepcopy
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any, OrderedDict
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 from cloudscraper import exceptions as cs_exceptions
@@ -17,11 +22,14 @@ from requests.utils import cookiejar_from_dict
 from ..config import Config
 from ..singleton import Singleton
 
+if TYPE_CHECKING:
+    from curl_cffi.requests.session import HttpMethod
+
 __all__ = ("Requests",)
 
 
 class CloudflareCompat:
-    def __init__(self, cloudscraper: "HttpXScraper"):
+    def __init__(self, cloudscraper: HttpXScraper):
         self.cloudscraper = cloudscraper
 
     @staticmethod
@@ -30,15 +38,12 @@ class CloudflareCompat:
             return (
                 resp.headers.get("Server", "").startswith("cloudflare")
                 and resp.status_code in [429, 503]
-                and (
-                    re.search(r"/cdn-cgi/images/trace/jsch/", resp.text, re.M | re.S)
-                    is not None
-                )
+                and (re.search(r"/cdn-cgi/images/trace/jsch/", resp.text, re.MULTILINE | re.DOTALL) is not None)
                 and (
                     re.search(
                         r"""<form .*?="challenge-form" action="/\S+__cf_chl_f_tk=""",
                         resp.text,
-                        re.M | re.S,
+                        re.MULTILINE | re.DOTALL,
                     )
                     is not None
                 )
@@ -55,7 +60,7 @@ class CloudflareCompat:
                 and re.search(
                     r"""cpo.src\s*=\s*['"]/cdn-cgi/challenge-platform/\S+orchestrate/jsch/v1""",
                     resp.text,
-                    re.M | re.S,
+                    re.MULTILINE | re.DOTALL,
                 )
                 is not None
             )
@@ -71,7 +76,7 @@ class CloudflareCompat:
                 and re.search(
                     r"""cpo.src\s*=\s*['"]/cdn-cgi/challenge-platform/\S+orchestrate/(captcha|managed)/v1""",
                     resp.text,
-                    re.M | re.S,
+                    re.MULTILINE | re.DOTALL,
                 )
                 is not None
             )
@@ -90,7 +95,7 @@ class CloudflareCompat:
                     re.search(
                         r"/cdn-cgi/images/trace/(captcha|managed)/",
                         resp.text,
-                        re.M | re.S,
+                        re.MULTILINE | re.DOTALL,
                     )
                     is not None
                 )
@@ -98,7 +103,7 @@ class CloudflareCompat:
                     re.search(
                         r"""<form .*?="challenge-form" action="/\S+__cf_chl_f_tk=""",
                         resp.text,
-                        re.M | re.S,
+                        re.MULTILINE | re.DOTALL,
                     )
                     is not None
                 )
@@ -118,7 +123,7 @@ class CloudflareCompat:
                     re.search(
                         r'<span class="cf-error-code">1020</span>',
                         resp.text,
-                        re.M | re.DOTALL,
+                        re.MULTILINE | re.DOTALL,
                     )
                     is not None
                 )
@@ -138,28 +143,26 @@ class CloudflareCompat:
         if self.is_New_Captcha_Challenge(resp):
             self.cloudscraper.simpleException(
                 cs_exceptions.CloudflareChallengeError,
-                "Detected a Cloudflare version 2 Captcha challenge, This feature is not available in the opensource (free) version.",
+                "Detected a Cloudflare version 2 Captcha challenge",
             )
 
         if self.is_New_IUAM_Challenge(resp):
             self.cloudscraper.simpleException(
                 cs_exceptions.CloudflareChallengeError,
-                "Detected a Cloudflare version 2 challenge, This feature is not available in the opensource (free) version.",
+                "Detected a Cloudflare version 2 challenge",
             )
 
-        if self.is_Captcha_Challenge(resp) or self.is_IUAM_Challenge(resp):
-            return True
+        return bool(self.is_Captcha_Challenge(resp) or self.is_IUAM_Challenge(resp))
 
-        return False
-
-    def IUAM_Challenge_Response(self, body: str, url: str, interpreter: str):
+    def IUAM_Challenge_Response(self, body: str, url: str, interpreter: str) -> dict[str, Any] | None:
+        payload = OrderedDict()
         try:
             formPayload = re.search(
                 r'<form (?P<form>.*?="challenge-form" '
                 r'action="(?P<challengeUUID>.*?'
                 r'__cf_chl_f_tk=\S+)"(.*?)</form>)',
                 body,
-                re.M | re.DOTALL,
+                re.MULTILINE | re.DOTALL,
             )
             formPayload = formPayload.groupdict() if formPayload else {}
 
@@ -169,10 +172,7 @@ class CloudflareCompat:
                     "Cloudflare IUAM detected, unfortunately we can't extract the parameters correctly.",
                 )
 
-            payload = OrderedDict()
-            for challengeParam in re.findall(
-                r"^\s*<input\s(.*?)/>", formPayload["form"], re.M | re.S
-            ):
+            for challengeParam in re.findall(r"^\s*<input\s(.*?)/>", formPayload["form"], re.MULTILINE | re.DOTALL):
                 inputPayload = dict(re.findall(r'(\S+)="(\S+)"', challengeParam))
                 if inputPayload.get("name") in ["r", "jschl_vc", "pass"]:
                     payload.update({inputPayload["name"]: inputPayload["value"]})
@@ -182,12 +182,13 @@ class CloudflareCompat:
                 cs_exceptions.CloudflareIUAMError,
                 "Cloudflare IUAM detected, unfortunately we can't extract the parameters correctly.",
             )
+            return
 
         try:
             parsed_url = urlparse(url)
-            payload["jschl_answer"] = JavaScriptInterpreter.dynamicImport(
-                interpreter
-            ).solveChallenge(body, parsed_url.netloc)
+            payload["jschl_answer"] = JavaScriptInterpreter.dynamicImport(interpreter).solveChallenge(
+                body, parsed_url.netloc
+            )
         except Exception as e:
             self.cloudscraper.simpleException(
                 cs_exceptions.CloudflareIUAMError,
@@ -195,27 +196,25 @@ class CloudflareCompat:
             )
 
         parsed_url = urlparse(url)
+        if not formPayload or "challengeUUID" not in formPayload:
+            return None
+
         return {
             "url": f"{parsed_url.scheme}://{parsed_url.netloc}{html.unescape(formPayload['challengeUUID'])}",
             "data": payload,
         }
 
-    async def Challenge_Response(self, resp: Response, **kwargs) -> Response:
+    async def Challenge_Response(self, resp: Response, **kwargs: Any) -> Response:
+        if not resp.request:
+            raise ValueError("Response does not have an associated request.")
         if self.is_Captcha_Challenge(resp):
             if self.cloudscraper.doubleDown:
-                request_method = getattr(resp, "_request_method", "GET")
-                resp = await self.cloudscraper.perform_request(
-                    request_method, resp.url, **kwargs
-                )
+                resp = await self.cloudscraper.perform_request(resp.request.method, resp.url, **kwargs)
 
             if not self.is_Captcha_Challenge(resp):
                 return resp
 
-            if (
-                not self.cloudscraper.captcha
-                or not isinstance(self.cloudscraper.captcha, dict)
-                or not self.cloudscraper.captcha.get("provider")
-            ):
+            if not self.cloudscraper.captcha or not self.cloudscraper.captcha.get("provider"):
                 self.cloudscraper.simpleException(
                     cs_exceptions.CloudflareCaptchaProvider,
                     "Cloudflare Captcha detected, unfortunately you haven't loaded an anti Captcha provider "
@@ -225,13 +224,11 @@ class CloudflareCompat:
             if self.cloudscraper.captcha.get("provider") == "return_response":
                 return resp
 
-        submit_url = self.IUAM_Challenge_Response(
-            resp.text, resp.url, self.cloudscraper.interpreter
-        )
+        submit_url = self.IUAM_Challenge_Response(resp.text, resp.url, self.cloudscraper.interpreter)
 
         if submit_url:
 
-            def updateAttr(obj, name, newValue):
+            def updateAttr(obj: dict[str, Any], name: str, newValue: dict[str, Any]) -> dict[str, Any]:
                 try:
                     obj[name].update(newValue)
                     return obj[name]
@@ -242,9 +239,7 @@ class CloudflareCompat:
 
             cloudflare_kwargs = deepcopy(kwargs)
             cloudflare_kwargs["allow_redirects"] = False
-            cloudflare_kwargs["data"] = updateAttr(
-                cloudflare_kwargs, "data", submit_url["data"]
-            )
+            cloudflare_kwargs["data"] = updateAttr(cloudflare_kwargs, "data", submit_url["data"])
 
             parsed_resp_url = urlparse(resp.url)
             cloudflare_kwargs["headers"] = updateAttr(
@@ -256,9 +251,7 @@ class CloudflareCompat:
                 },
             )
 
-            challengeSubmitResponse = await self.cloudscraper.request(
-                "POST", submit_url["url"], **cloudflare_kwargs
-            )
+            challengeSubmitResponse = await self.cloudscraper.request("POST", submit_url["url"], **cloudflare_kwargs)
 
             if challengeSubmitResponse.status_code == 400:
                 self.cloudscraper.simpleException(
@@ -285,26 +278,22 @@ class CloudflareCompat:
                 else:
                     redirect_location = location_header
 
-                request_method = getattr(resp, "_request_method", "GET")
                 if redirect_location:
-                    return await self.cloudscraper.request(
-                        request_method, redirect_location, **cloudflare_kwargs
-                    )
+                    return await self.cloudscraper.request(resp.request.method, redirect_location, **cloudflare_kwargs)  # type: ignore
 
-        request_method = getattr(resp, "_request_method", "GET")
-        return await self.cloudscraper.request(request_method, resp.url, **kwargs)
+        return await self.cloudscraper.request(resp.request.method, resp.url, **kwargs)  # type: ignore
 
 
-class HttpXScraper(AsyncSession):
+class HttpXScraper(AsyncSession[Response]):
     def __init__(
         self,
-        *args,
+        *args: Any,
         delay: float | None = None,
-        captcha: dict | None = None,
+        captcha: dict[str, Any] | None = None,
         double_down: bool = True,
         interpreter: str = "native",
         debug: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ):
         self.debug = debug
 
@@ -313,32 +302,28 @@ class HttpXScraper(AsyncSession):
         self.doubleDown = double_down
         self.interpreter = interpreter
 
-        self.user_agent = User_Agent(
-            allow_brotli=True, browser=kwargs.pop("browser", None)
-        )
+        self.user_agent = User_Agent(allow_brotli=True, browser=kwargs.pop("browser", None))
 
         self._solveDepthCnt = 0
         self.solveDepth = kwargs.pop("solveDepth", 3)
 
         impersonate = kwargs.pop("impersonate", "chrome110")
-        super(HttpXScraper, self).__init__(*args, impersonate=impersonate, **kwargs)
+        super().__init__(*args, impersonate=impersonate, **kwargs)
 
-        if hasattr(self, "headers") and self.user_agent.headers:
+        if hasattr(self, "headers") and self.user_agent.headers:  # type: ignore
             self.headers.update(dict(self.user_agent.headers))  # type: ignore
 
-    def simpleException(self, exception, msg):
+    def simpleException(self, exception: type[Exception], msg: str) -> None:
         self._solveDepthCnt = 0
         sys.tracebacklimit = 0
         raise exception(msg)
 
-    async def perform_request(self, method, url, *args, **kwargs):
+    async def perform_request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
         response = await super().request(method, url, *args, **kwargs)
-        response._request_method = method
         return response
 
-    async def request(self, method: str, url: str, *args, **kwargs) -> Response:
+    async def request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
         response = await self.perform_request(method, url, *args, **kwargs)
-        response._request_method = method
 
         cloudflare_challenge = CloudflareCompat(self)
         if cloudflare_challenge.is_Challenge_Request(response):
@@ -361,7 +346,7 @@ class HttpXScraper(AsyncSession):
 # class Requests(Singleton, CloudScraper):
 class Requests(Singleton, HttpXScraper):
     def __init__(self):
-        super(Requests, self).__init__(
+        super().__init__(
             browser={
                 # "browser": "firefox",
                 # "platform": "windows",
@@ -399,11 +384,7 @@ class Requests(Singleton, HttpXScraper):
             # print("Cookies from self.cookies:", self.cookies)
             cookie = SimpleCookie(cookies)
             for key, morsel in cookie.items():
-                existing_cookies = [
-                    c
-                    for c in self.cookies.jar
-                    if c.name == key and c.domain == parsed_url.netloc
-                ]
+                existing_cookies = [c for c in self.cookies.jar if c.name == key and c.domain == parsed_url.netloc]
                 if not existing_cookies:
                     self.cookies.set(
                         key,
@@ -412,9 +393,8 @@ class Requests(Singleton, HttpXScraper):
                         path=parsed_url.path,
                     )
 
-    async def request(self, method, url, *args, **kwargs):
-        if headers := kwargs.get("headers"):
-            if isinstance(headers, dict):
-                self._clean_headers(url, headers)
+    async def request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
+        if (headers := kwargs.get("headers")) and isinstance(headers, dict):
+            self._clean_headers(url, headers)  # type: ignore
 
         return await super().request(method, url, **kwargs)

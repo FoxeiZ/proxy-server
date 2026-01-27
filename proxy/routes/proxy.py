@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from curl_cffi.requests import RequestsError
 from quart import Blueprint, Response, redirect, render_template, request, session
 
-from ..errors import NeedCSRF
+from ..errors import NeedCSRFError
 from ..modifiers import modify_html_content, modify_js_content
 from ..utils import Requests, ResourceCache
 from ..utils.logger import get_logger
@@ -59,10 +59,7 @@ async def proxy(url: str):
         content_type = request.headers.get("Content-Type", "")
         if "application/json" in content_type:
             request_data = await request.get_json()
-        elif (
-            "multipart/form-data" in content_type
-            or "application/x-www-form-urlencoded" in content_type
-        ):
+        elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
             request_data = await request.form
         else:
             request_data = await request.get_data()
@@ -102,9 +99,7 @@ async def proxy(url: str):
                 request_parts = urlparse(request.url)
                 split_paths = request_parts.path.split("/", 3)
                 if len(split_paths) < 4:
-                    logger.error(
-                        "invalid URL path for redirect: %s", request_parts.path
-                    )
+                    logger.error("invalid URL path for redirect: %s", request_parts.path)
                     return Response("invalid redirect path", status=400)
                 parts = parts._replace(netloc=split_paths[2])
 
@@ -127,7 +122,7 @@ async def proxy(url: str):
                 proxy_base=request.host_url,
                 is_proxy_images=session.get("proxy_images", False),
             )
-        except NeedCSRF as e:
+        except NeedCSRFError as e:
             logger.warning("CSRF challenge detected for %s: %s", target_url, e)
             response_url_parsed = urlparse(response.url)
             html_content = await render_template(

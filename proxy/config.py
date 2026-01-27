@@ -1,6 +1,6 @@
 import argparse
 import os
-from typing import Any, Dict
+from typing import Any
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -14,7 +14,7 @@ class ConfigSingleton(Singleton):
 
     def __init__(self) -> None:
         """Initialize the configuration singleton."""
-        self._config: Dict[str, Any] = {}
+        self._config: dict[str, Any] = {}
         self._parse_args()
         self._load_from_env()
 
@@ -88,7 +88,7 @@ class ConfigSingleton(Singleton):
 
     def _load_from_env(self) -> None:
         """Load configuration from environment variables (if not already set by args)."""
-        env_vars: Dict[str, Any] = {
+        env_vars: dict[str, Any] = {
             "LOG_LEVEL": "INFO",
             "LOG_FUNCTION_CALL": False,
             "GALLERY_PATH": "galleries",

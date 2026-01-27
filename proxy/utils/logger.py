@@ -1,5 +1,4 @@
 import logging
-from typing import Type
 
 from ..config import Config
 
@@ -9,7 +8,7 @@ __all__ = ("get_logger",)
 def get_logger(
     name: str,
     level: str | int = Config.log_level,
-    handler: Type[logging.Handler] = logging.StreamHandler,
+    handler: type[logging.Handler] = logging.StreamHandler,
     formatter: str = "%(asctime)s - %(levelname)s - %(name)s - %(message)s",
 ) -> logging.Logger:
     logger = logging.getLogger(name)

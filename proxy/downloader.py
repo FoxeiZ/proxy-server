@@ -7,8 +7,7 @@ from asyncio import Semaphore
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
-from typing import TYPE_CHECKING, AsyncGenerator, Iterable, Optional
+from typing import TYPE_CHECKING, cast
 
 from .enums import DownloadStatus, FileStatus
 from .singleton import Singleton
@@ -23,6 +22,10 @@ from .utils import (
 from .utils.xml import XMLIOWriter
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator, Coroutine
+    from pathlib import Path
+    from typing import Any
+
     from ._types.nhentai import NhentaiGallery
 
 
@@ -50,7 +53,7 @@ class DownloadProgress:
 
 
 class DownloadProgressWithLock:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         self._lock = AsyncLock()
         self._progress = DownloadProgress(*args, **kwargs)
 
@@ -65,7 +68,7 @@ class DownloadProgressWithLock:
         await self._lock.acquire()
         return self._progress
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self._lock.release()
 
 
@@ -79,11 +82,9 @@ class DownloadPool(Singleton):
         self._requester = Requests()
         self._progress: dict[int, DownloadProgressWithLock] = {}
         self._lock = AsyncLock()
-        self._tasks: dict[int, asyncio.Task] = {}
+        self._tasks: dict[int, asyncio.Task[None]] = {}
 
-    async def _download(
-        self, progress_ctx: DownloadProgressWithLock, info: "NhentaiGallery"
-    ) -> None:
+    async def _download(self, progress_ctx: DownloadProgressWithLock, info: NhentaiGallery) -> None:
         """Download images for the given gallery information."""
         async with self._semaphore:
             gallery_title = info["title"]["main_title"]
@@ -99,9 +100,7 @@ class DownloadPool(Singleton):
                 )
                 return
 
-            logger.info(
-                "downloading images for gallery '%s' ID: %d", gallery_title, gallery_id
-            )
+            logger.info("downloading images for gallery '%s' ID: %d", gallery_title, gallery_id)
             async with progress_ctx.context_lock() as progress:
                 progress.status = DownloadStatus.DOWNLOADING
 
@@ -113,7 +112,7 @@ class DownloadPool(Singleton):
             gallery_path = gallery_path / str(gallery_id)
             await asyncio.to_thread(gallery_path.mkdir, exist_ok=True, parents=True)
 
-            download_tasks = []
+            download_coros: list[Coroutine[Any, Any, None]] = []
             try:
                 for img_idx, image in enumerate(info["images"]["pages"], start=1):
                     async with progress_ctx.context_lock() as progress:
@@ -125,12 +124,10 @@ class DownloadPool(Singleton):
                     path = gallery_path / f"{img_idx}.{image_type}"
 
                     task = self._download_image(url, path, gallery_id)
-                    download_tasks.append(task)
+                    download_coros.append(task)
 
-                if download_tasks:
-                    results = await asyncio.gather(
-                        *download_tasks, return_exceptions=True
-                    )
+                if download_coros:
+                    results = await asyncio.gather(*download_coros, return_exceptions=True)
                     for result in results:
                         if isinstance(result, Exception):
                             logger.error("download task failed: %s", result)
@@ -141,8 +138,8 @@ class DownloadPool(Singleton):
                         "download interrupted for gallery ID %d, waiting for tasks to finish",
                         progress.gallery_id,
                     )
-                if download_tasks:
-                    await asyncio.gather(*download_tasks, return_exceptions=True)
+                if download_coros:
+                    await asyncio.gather(*download_coros, return_exceptions=True)
                 raise
 
     async def _on_download_image_error(self, gallery_id: int, error: Exception):
@@ -171,10 +168,7 @@ class DownloadPool(Singleton):
 
         async with progress_ctx.context_lock() as progress:
             progress.downloaded_images += 1
-            if (
-                progress.downloaded_images + progress.failed_images
-                >= progress.total_images
-            ):
+            if progress.downloaded_images + progress.failed_images >= progress.total_images:
                 if progress.failed_images == 0:
                     logger.info("all images downloaded for gallery ID %d", gallery_id)
                     progress.status = DownloadStatus.COMPLETED
@@ -187,46 +181,35 @@ class DownloadPool(Singleton):
             await self._on_download_image_complete(gallery_id)
             return
 
-        def _chunked_write(fp: Path, chunk: Iterable[bytes]):
-            with open(fp, "wb") as f:
-                for data in chunk:
-                    f.write(data)
-
         for idx_server in range(1, 10):
             formatted_url = url.format(idx_server=idx_server)
             try:
-                async with self._requester.stream(
-                    "GET", formatted_url, timeout=30
-                ) as response:
-                    if response.status_code == 200:
-                        chunks = []
-                        async for chunk in response.aiter_bytes(chunk_size=8192):
-                            chunks.append(chunk)
-
-                        await asyncio.to_thread(_chunked_write, path, chunks)
-
-                        logger.debug("successfully downloaded: %s", formatted_url)
-                        await self._on_download_image_complete(gallery_id)
-                        return
-                    else:
+                async with self._requester.stream("GET", formatted_url, timeout=30, allow_redirects=True) as response:
+                    if response.status_code != 200:
                         logger.warning(
                             "failed to download image from %s: %s",
                             formatted_url,
                             response.status_code,
                         )
+                        continue
+
+                    async for chunk in response.aiter_content(chunk_size=8192):  # type: ignore
+                        await asyncio.to_thread(path.write_bytes, cast("bytes", chunk))
+
+                    logger.debug("successfully downloaded: %s", formatted_url)
+                    await self._on_download_image_complete(gallery_id)
+                    return
             except Exception as e:
                 logger.error("error downloading from %s: %s", formatted_url, e)
                 continue
 
-        await self._on_download_image_error(
-            gallery_id, Exception(f"Failed to download from all servers: {url}")
-        )
+        await self._on_download_image_error(gallery_id, Exception(f"Failed to download from all servers: {url}"))
 
     async def _update_progress_and_task(
         self,
         gallery_id: int,
         progress_ctx: DownloadProgressWithLock,
-        task: asyncio.Task,
+        task: asyncio.Task[None],
     ):
         async with self._lock:
             self._progress[gallery_id] = progress_ctx
@@ -252,9 +235,7 @@ class DownloadPool(Singleton):
 
         logger.info("download pool shutdown complete")
 
-    def _sync_save_cbz(
-        self, info: NhentaiGallery, gallery_path: Path, remove_images: bool = True
-    ):
+    def _sync_save_cbz(self, info: NhentaiGallery, gallery_path: Path, remove_images: bool = True):
         # gallery_path, scan_callback = make_gallery_path(
         #     gallery_title=info["title"], gallery_language=info["language"], cache=True
         # )
@@ -271,10 +252,7 @@ class DownloadPool(Singleton):
         with zipfile.ZipFile(file_path, "w") as cbz_zip:
             total_images = 0
             for img_file in img_dir.iterdir():
-                if (
-                    img_file.is_file()
-                    and img_file.suffix.lower().lstrip(".") in SUPPORTED_IMAGE_TYPES
-                ):
+                if img_file.is_file() and img_file.suffix.lower().lstrip(".") in SUPPORTED_IMAGE_TYPES:
                     cbz_zip.write(img_file, img_file.name)
                     total_images += 1
 
@@ -294,7 +272,7 @@ class DownloadPool(Singleton):
                         img_file.unlink()
                 img_dir.rmdir()
 
-    async def save_cbz(self, info: "NhentaiGallery", remove_images: bool = True):
+    async def save_cbz(self, info: NhentaiGallery, remove_images: bool = True):
         loop = asyncio.get_running_loop()
         gallery_path, scan_callback = await make_gallery_path(
             gallery_title=info["title"], gallery_language=info["language"], cache=True
@@ -320,9 +298,7 @@ class DownloadPool(Singleton):
             )
             return
         elif file_status == FileStatus.COMPLETED:
-            logger.info(
-                "gallery ID %d is already downloaded, converting to CBZ", gallery_id
-            )
+            logger.info("gallery ID %d is already downloaded, converting to CBZ", gallery_id)
             await self.save_cbz(info)
             return
 
@@ -345,9 +321,7 @@ class DownloadPool(Singleton):
         task = asyncio.create_task(self._download_task(progress_ctx, info))
         await self._update_progress_and_task(gallery_id, progress_ctx, task)
 
-    async def _download_task(
-        self, progress_ctx: DownloadProgressWithLock, info: "NhentaiGallery"
-    ):
+    async def _download_task(self, progress_ctx: DownloadProgressWithLock, info: NhentaiGallery):
         try:
             await self._download(progress_ctx, info)
         finally:
@@ -375,14 +349,12 @@ class DownloadPool(Singleton):
 
             return False
 
-    async def get_progress(self, gallery_id: int) -> Optional[DownloadProgressWithLock]:
+    async def get_progress(self, gallery_id: int) -> DownloadProgressWithLock | None:
         """Get download progress for a specific gallery."""
         async with self._lock:
             return self._progress.get(gallery_id)
 
-    async def get_paginate_progress(
-        self, page: int = 1, limit: int = 10
-    ) -> AsyncGenerator[DownloadProgress]:
+    async def get_paginate_progress(self, page: int = 1, limit: int = 10) -> AsyncGenerator[DownloadProgress]:
         """Get paginated download progress."""
         async with self._lock:
             all_progress = list(self._progress.values())

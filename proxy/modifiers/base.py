@@ -1,15 +1,18 @@
+# pyright: reportUnnecessaryIsInstance=false
+
 from __future__ import annotations
 
 import inspect
 import re
 from collections import OrderedDict
-from typing import Callable, Coroutine, Protocol
+from collections.abc import Callable, Coroutine
+from typing import Protocol
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
 from quart import url_for
 
-from ..errors import NeedToHandle
+from ..errors import NeedToHandleError
 from ..singleton import Singleton
 from ..utils.logger import get_logger
 
@@ -44,7 +47,7 @@ class ModifyRule(Singleton):
         self.js_modifiers: OrderedDict[str, Callable[[str], str]] = OrderedDict()
 
     @classmethod
-    def add_html_rule(cls, pattern: str):
+    def add_html_rule(cls, pattern: str) -> Callable[[HtmlModifierProtocol], HtmlModifierProtocol]:
         """Add a HTML modification rule."""
 
         def wrapper(
@@ -54,9 +57,7 @@ class ModifyRule(Singleton):
             if not isinstance(func, Callable):
                 raise TypeError("func must be a callable")
             if pattern in instance.html_modifiers:
-                raise ValueError(
-                    f"HTML modification rule for pattern '{pattern}' already exists"
-                )
+                raise ValueError(f"HTML modification rule for pattern '{pattern}' already exists")
             _ = re.compile(pattern)  # Validate the pattern
 
             instance.html_modifiers[pattern] = func
@@ -70,7 +71,7 @@ class ModifyRule(Singleton):
         return wrapper
 
     @classmethod
-    def add_js_rule(cls, pattern: str):
+    def add_js_rule(cls, pattern: str) -> Callable[[Callable[[str], str]], Callable[[str], str]]:
         """Add a JavaScript modification rule."""
 
         def wrapper(func: Callable[[str], str]) -> Callable[[str], str]:
@@ -81,9 +82,7 @@ class ModifyRule(Singleton):
 
         return wrapper
 
-    def _proxy_image_toggle_html(
-        self, soup: BeautifulSoup, toggle: bool = False
-    ) -> None:
+    def _proxy_image_toggle_html(self, soup: BeautifulSoup, toggle: bool = False) -> None:
         """Toggle for proxy_image request."""
         body = soup.find("body")
         if not body or not isinstance(body, Tag):
@@ -111,16 +110,12 @@ class ModifyRule(Singleton):
                     break
 
         if not has_observer:
-            observer_script = soup.new_tag(
-                "script", src=url_for("static", filename="base/proxy-dom-observer.js")
-            )
+            observer_script = soup.new_tag("script", src=url_for("static", filename="base/proxy-dom-observer.js"))
             # ensure head element exists before appending
             if soup.head is not None:
-                soup.head.append(observer_script)  # type: ignore
+                soup.head.append(observer_script)
             else:
-                logger.warning(
-                    "no <head> element found, cannot inject DOM observer script"
-                )
+                logger.warning("no <head> element found, cannot inject DOM observer script")
 
     async def modify_html(
         self,
@@ -236,23 +231,16 @@ async def modify_html_content(
                         path_segments = page_url_parts.path.lstrip("/").split("/")
                         if path_segments:
                             path_segments.pop()
-                        tag[attr_name] = (
-                            f"/p/{page_url_parts.netloc}/{'/'.join(path_segments)}/{url.lstrip('/')}"
-                        )
+                        tag[attr_name] = f"/p/{page_url_parts.netloc}/{'/'.join(path_segments)}/{url.lstrip('/')}"
                     elif tag_name == "img" and not is_proxy_images:
-                        tag[attr_name] = (
-                            f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
-                        )
+                        tag[attr_name] = f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
                     else:
                         tag[attr_name] = f"{request_url.rstrip('/')}/{url.lstrip('/')}"
 
+                elif tag_name == "img" and not is_proxy_images:
+                    tag[attr_name] = f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
                 else:
-                    if tag_name == "img" and not is_proxy_images:
-                        tag[attr_name] = (
-                            f"{page_url_parts.scheme}://{page_url_parts.netloc}{url}"
-                        )
-                    else:
-                        tag[attr_name] = f"/p/{base_url}/{url.lstrip('/')}"
+                    tag[attr_name] = f"/p/{base_url}/{url.lstrip('/')}"
 
                 logger.debug("modified %s to: %s", url, tag[attr_name])
 
@@ -266,14 +254,10 @@ async def modify_html_content(
             )
             soup.head.insert(0, meta_tag)
         else:
-            logger.warning(
-                "no <head> element found, cannot inject proxy image meta tag"
-            )
-        return await ModifyRule().modify_html(
-            page_url, soup, html_content, is_proxy_images
-        )
+            logger.warning("no <head> element found, cannot inject proxy image meta tag")
+        return await ModifyRule().modify_html(page_url, soup, html_content, is_proxy_images)
 
-    except NeedToHandle as e:
+    except NeedToHandleError as e:
         raise e from None
 
     except Exception as e:

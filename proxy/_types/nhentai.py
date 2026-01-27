@@ -1,4 +1,4 @@
-from typing import List, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
 
 
 class _GalleryImageInfo(TypedDict):
@@ -17,7 +17,7 @@ GalleryThumbnail = _GalleryImageInfo
 class GalleryImage(TypedDict):
     """Type definition for gallery image data."""
 
-    pages: List[GalleryPage]
+    pages: list[GalleryPage]
     cover: GalleryCover
     thumbnail: GalleryThumbnail
 
@@ -63,18 +63,18 @@ class NhentaiGalleryData(_NhentaiData):
     """Type definition for nhentai gallery data from JSON."""
 
     title: _NhentaiTitleData
-    tags: List[_NhentaiTagData]
+    tags: list[_NhentaiTagData]
 
 
 class NhentaiGallery(_NhentaiData):
     """Type definition for nhentai gallery data with additional fields."""
 
     title: ParsedMangaTitle
-    tags: List[str]
-    artists: List[str]
-    writers: List[str]
-    parodies: List[str]
-    characters: List[str]
+    tags: list[str]
+    artists: list[str]
+    writers: list[str]
+    parodies: list[str]
+    characters: list[str]
     language: str
     category: str
     page_count: int

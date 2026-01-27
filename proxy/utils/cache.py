@@ -6,7 +6,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple, Optional, TypeVar
+from typing import NamedTuple, TypeVar
 from urllib.parse import urlparse
 
 from .._types.nhentai import NhentaiGallery
@@ -17,16 +17,14 @@ from ..utils.logger import get_logger
 V = TypeVar("V")
 K = TypeVar("K")
 
-__all__ = ("GalleryInfoCache", "ResourceCache", "LRUCache", "ThumbnailCache")
+__all__ = ("GalleryInfoCache", "LRUCache", "ResourceCache", "ThumbnailCache")
 
 logger = get_logger(__name__)
 
 
 def extract_top_level_domain(url: str) -> str:
     try:
-        parsed = urlparse(
-            f"https://{url}" if not url.startswith(("http://", "https://")) else url
-        )
+        parsed = urlparse(f"https://{url}" if not url.startswith(("http://", "https://")) else url)
         hostname = parsed.hostname or parsed.netloc
 
         if not hostname:
@@ -46,18 +44,21 @@ def extract_top_level_domain(url: str) -> str:
 
         # Extract top-level domain (last 2 parts for most cases)
         # Handle special cases like .co.uk, .com.au, etc.
-        if len(parts) >= 3 and parts[-2] in (
-            "co",
-            "com",
-            "net",
-            "org",
-            "gov",
-            "edu",
-            "ac",
-        ):
-            top_domain = ".".join(parts[-3:])
-        else:
-            top_domain = ".".join(parts[-2:])
+        top_domain = (
+            ".".join(parts[-3:])
+            if len(parts) >= 3
+            and parts[-2]
+            in (
+                "co",
+                "com",
+                "net",
+                "org",
+                "gov",
+                "edu",
+                "ac",
+            )
+            else ".".join(parts[-2:])
+        )
 
         return top_domain
 
@@ -92,12 +93,12 @@ def generate_cache_keys(url: str) -> tuple[str, str]:
 @dataclass
 class CacheEntry:
     data: bytes
-    headers: dict
+    headers: dict[str, str]
     size: int
     created_at: float
     last_accessed: float
     access_count: int
-    content_type: Optional[str] = None
+    content_type: str | None = None
 
     def is_expired(self, ttl: float) -> bool:
         return time.time() - self.created_at > ttl
@@ -126,7 +127,7 @@ class LRUCache(OrderedDict[K, V]):
         self.max_size = max_size
         self._lock = threading.Lock()
 
-    def get(self, key: K) -> V | None:  # type: ignore
+    def get(self, key: K) -> V | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         with self._lock:
             if key not in self:
                 return None
@@ -184,8 +185,6 @@ class ResourceCache(Singleton):
             return
 
         def cleanup_worker():
-            import time
-
             while True:
                 try:
                     time.sleep(300)  # cleanup every 5 minutes
@@ -202,13 +201,11 @@ class ResourceCache(Singleton):
                 except Exception as e:
                     logger.error("error in cache cleanup task: %s", e)
 
-        self._cleanup_thread = threading.Thread(
-            target=cleanup_worker, daemon=True, name="CacheCleanup"
-        )
+        self._cleanup_thread = threading.Thread(target=cleanup_worker, daemon=True, name="CacheCleanup")
         self._cleanup_thread.start()
         logger.info("started cache cleanup background thread")
 
-    def get(self, key: str) -> Optional[tuple[dict, bytes]]:
+    def get(self, key: str) -> tuple[dict[str, str], bytes] | None:
         """Get a cached resource using smart cache key strategy.
 
         Tries domain-level cache first, then falls back to full URL cache.
@@ -265,9 +262,9 @@ class ResourceCache(Singleton):
     def put(
         self,
         key: str,
-        headers: dict,
+        headers: dict[str, str],
         data: bytes,
-        content_type: Optional[str] = None,
+        content_type: str | None = None,
     ) -> bool:
         """Put a resource in the cache using domain-level key strategy."""
         data_size = len(data)
@@ -338,10 +335,7 @@ class ResourceCache(Singleton):
         max_memory_bytes = self._max_memory_mb * 1024 * 1024
         evicted_count = 0
 
-        while (
-            self._current_memory > max_memory_bytes
-            or len(self._cache) > self._max_items
-        ) and self._cache:
+        while (self._current_memory > max_memory_bytes or len(self._cache) > self._max_items) and self._cache:
             _, entry = self._cache.popitem(last=False)
             self._current_memory -= entry.size
             evicted_count += 1
@@ -356,7 +350,7 @@ class ResourceCache(Singleton):
     def cleanup_expired(self) -> int:
         """Remove expired entries and return count of removed items."""
         with self._lock:
-            expired_keys = []
+            expired_keys: list[str] = []
 
             for key, entry in self._cache.items():
                 if entry.is_expired(self._default_ttl):
@@ -374,12 +368,8 @@ class ResourceCache(Singleton):
     def get_stats(self) -> CacheStats:
         with self._lock:
             total_requests = self._hits + self._misses
-            hit_rate = (
-                (self._hits / total_requests * 100) if total_requests > 0 else 0.0
-            )
-            domain_hit_rate = (
-                (self._domain_hits / self._hits * 100) if self._hits > 0 else 0.0
-            )
+            hit_rate = (self._hits / total_requests * 100) if total_requests > 0 else 0.0
+            domain_hit_rate = (self._domain_hits / self._hits * 100) if self._hits > 0 else 0.0
 
             return CacheStats(
                 hits=self._hits,

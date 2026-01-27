@@ -1,11 +1,12 @@
+# pyright: reportUnknownVariableType=false
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 if TYPE_CHECKING:
-    from typing import IO
+    from typing import IO, Self
 
     from .._types.nhentai import NhentaiGallery
 
@@ -21,10 +22,10 @@ class XMLElement(TypedDict):
 class XMLWriter:
     def __init__(self):
         self.root_tag: str = "Root"
-        self.root_attributes: dict = {}
+        self.root_attributes: dict[str, str] = {}
         self.elements: list[XMLElement] = []
 
-    def create_root(self, tag_name: str, attributes: dict | None = None):
+    def create_root(self, tag_name: str, attributes: dict[str, str] | None = None):
         """Create a new root element"""
         self.root_tag = tag_name
         self.root_attributes = attributes or {}
@@ -34,7 +35,7 @@ class XMLWriter:
         self,
         tag_name: str,
         text: str | int | None = None,
-        attributes: dict | None = None,
+        attributes: dict[str, str] | None = None,
     ):
         """Add a child element"""
         element: XMLElement = {
@@ -63,15 +64,13 @@ class XMLWriter:
                 .replace("'", "&#39;")
             )
 
-        def _build_attrs(attrs_dict):
+        def _build_attrs(attrs_dict: dict[str, str] | None):
             """Helper to build attribute string"""
             if not attrs_dict:
                 return ""
-            return " " + " ".join(
-                f'{k}="{_escape_xml(v)}"' for k, v in attrs_dict.items()
-            )
+            return " " + " ".join(f'{k}="{_escape_xml(v)}"' for k, v in attrs_dict.items())
 
-        def _build_element(element, indent=""):
+        def _build_element(element: XMLElement, indent: str = "") -> str:
             """Helper to build element string"""
             attrs = _build_attrs(element["attributes"])
             if element["text"]:
@@ -86,9 +85,7 @@ class XMLWriter:
 
         if pretty_print:
             lines = [header, f"<{self.root_tag}{root_attrs}>"]
-            lines.extend(
-                _build_element(element, " " * indent) for element in self.elements
-            )
+            lines.extend(_build_element(element, " " * indent) for element in self.elements)
             lines.append(f"</{self.root_tag}>")
             return "\n".join(lines)
         else:
@@ -106,8 +103,7 @@ class XMLWriter:
         self.add_element("Title", gallery_info["title"]["chapter_title"])
         self.add_element(
             "Series",
-            gallery_info["title"]["english_title"]
-            or gallery_info["title"]["main_title"],
+            gallery_info["title"]["english_title"] or gallery_info["title"]["main_title"],
         )
         self.add_element("Number", gallery_info["title"]["chapter_number"])
         self.add_element(
@@ -132,9 +128,7 @@ class XMLWriter:
         self.add_element("Characters", ", ".join(gallery_info["characters"]))
         self.add_element("Web", f"https://nhentai.net/g/{gallery_info['id']}")
         self.add_element("Translated", "Yes" if gallery_info["translated"] else "No")
-        self.add_element(
-            "BlackAndWhite", "No" if "full color" in gallery_info["tags"] else "Yes"
-        )
+        self.add_element("BlackAndWhite", "No" if "full color" in gallery_info["tags"] else "Yes")
         self.add_element("Folder", folder)
 
 
@@ -154,14 +148,14 @@ class XMLReader:
     def __init__(self):
         self.root: ET.Element[str] | None = None
         self.root_tag: None | str = None
-        self.root_attributes = {}
+        self.root_attributes: dict[str, str] = {}
         self.elements: list[XMLElement] = []
 
     @classmethod
-    def from_string(cls, xml_string: str):
+    def from_string(cls, xml_string: str) -> Self:
         self = cls()
 
-        self.root = ET.fromstring(xml_string)
+        self.root = ET.fromstring(xml_string)  # noqa
         self.root_tag = self._strip_namespace(self.root.tag)
         self.root_attributes = self.root.attrib
         self.elements = []
@@ -179,11 +173,11 @@ class XMLReader:
         return self
 
     @classmethod
-    def parse_file(cls, file_path: str | Path):
+    def parse_file(cls, file_path: str | Path) -> XMLReader:
         """Parse XML content from a file."""
         self = cls()
         path = Path(file_path)
-        tree = ET.parse(path)
+        tree = ET.parse(path)  # noqa
         self.root = tree.getroot()
         self.root_tag = self._strip_namespace(self.root.tag)
         self.root_attributes = self.root.attrib
@@ -233,7 +227,7 @@ class XMLReader:
             return []
         return [item.strip() for item in text.split(separator) if item.strip()]
 
-    def dump(self) -> Dict[str, Any]:
+    def dump(self) -> dict[str, Any]:
         """Convert parsed XML to a dictionary."""
         result = {
             "root_tag": self.root_tag,

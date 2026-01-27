@@ -28,16 +28,13 @@ async def galleries_index():
     limit = request.args.get("limit", 20, type=int)
     language = request.args.get("language", "english", type=str)
 
-    if page < 1:
-        page = 1
+    page = max(page, 1)
     if limit < 1:
         limit = 20
     return await render_template(
         "nhentai/galleries.jinja2",
         page=page,
-        cbz_files=await GalleryScanner.get_gallery_paginate(
-            language, limit=limit, page=page
-        ),
+        cbz_files=await GalleryScanner.get_gallery_paginate(language, limit=limit, page=page),
     )
 
 
@@ -125,8 +122,7 @@ async def gallery_download_progress():
     """Get the download progress."""
     page = request.args.get("page", 1, type=int)
     limit = request.args.get("limit", 10, type=int)
-    if page < 1:
-        page = 1
+    page = max(page, 1)
     if limit < 1:
         limit = 10
 

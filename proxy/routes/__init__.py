@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from quart import Quart
 
 
-def register_all_routes(app: "Quart") -> None:
+def register_all_routes(app: Quart) -> None:
     """Register all routes with the given Quart app."""
     register_proxy_routes(app)
     register_func_routes(app)
