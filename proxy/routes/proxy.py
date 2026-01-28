@@ -5,7 +5,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from curl_cffi.requests import RequestsError
+from httpx import HTTPError
 from quart import Blueprint, Response, redirect, render_template, request, session
 
 from ..errors import NeedCSRFError
@@ -60,7 +60,7 @@ async def proxy(url: str):
         if "application/json" in content_type:
             request_data = await request.get_json()
         elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
-            request_data = await request.form
+            request_data = await request.form  # type: ignore
         else:
             request_data = await request.get_data()
 
@@ -72,11 +72,11 @@ async def proxy(url: str):
             target_url,
             params=request.args,
             headers=dict(request.headers),
-            allow_redirects=True,
+            follow_redirects=True,
             data=request_data,
             timeout=10,
         )
-    except RequestsError as e:
+    except HTTPError as e:
         logger.error("connection error fetching %s: %s", target_url, e)
         return Response(f"connection error fetching {target_url}", status=502)
     except Exception as e:
@@ -113,24 +113,22 @@ async def proxy(url: str):
             )
 
         try:
-            response_url_parsed = urlparse(response.url)
             html_content = await modify_html_content(
                 request_url=request.url,
                 page_url=str(response.url),
                 html_content=response.text,
-                base_url=response_url_parsed.netloc,
+                base_url=response.url.netloc.decode("utf-8"),
                 proxy_base=request.host_url,
                 is_proxy_images=session.get("proxy_images", False),
             )
         except NeedCSRFError as e:
             logger.warning("CSRF challenge detected for %s: %s", target_url, e)
-            response_url_parsed = urlparse(response.url)
             html_content = await render_template(
                 "csrf.jinja2",
                 error_message=str(e),
                 redirect_url=request.url,
                 problem_url=target_url,
-                netloc=response_url_parsed.netloc,
+                netloc=response.url.netloc.decode("utf-8"),
             )
 
         return Response(
@@ -159,7 +157,7 @@ async def proxy(url: str):
         cache = BytesIO() if response.status_code == 200 else None
 
         try:
-            for content in response.iter_content(chunk_size=4096):
+            for content in response.iter_bytes(chunk_size=4096):
                 yield content
                 if cache:
                     cache.write(content)

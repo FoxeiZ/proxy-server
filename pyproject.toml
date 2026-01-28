@@ -15,7 +15,7 @@ dev = [
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 include = ["proxy"]
-exclude = ["**/__pycache__", ".venv"]
+exclude = ["**/__pycache__", ".venv", "typings"]
 pythonPlatform = "All"
 
 reportUnusedImport = false

@@ -1,14 +1,10 @@
 from __future__ import annotations
 
-import json
 from http.cookies import SimpleCookie
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from quart import Blueprint, Response, redirect, render_template, request
-from requests.utils import dict_from_cookiejar
 
-from ..config import Config
 from ..utils import Requests
 
 if TYPE_CHECKING:
@@ -83,15 +79,14 @@ async def csrf():
             f"/csrf?error_message=cf_clearance cookie not found in the provided cookies&redirect_url={redirect_url}&problem_url={form.get('problem_url', '')}&netloc={netloc}"
         )
 
-    cookies = Requests().cookies
+    _requests = Requests()
+    cookies = _requests.cookies
     cookies.set("cf_clearance", simple_cookie["cf_clearance"].value, domain=netloc)
     for key in ("csrftoken", "sessionid", "session-affinity"):
         if key in simple_cookie:
             cookies.set(key, simple_cookie[key].value, domain=netloc)
 
-    cookies_dict = dict_from_cookiejar(cookies)
-    (Path(Config.cache_path) / "cookies.json").write_text(json.dumps(cookies_dict), encoding="utf-8")
-
+    _requests.dump_cookies()
     return redirect(redirect_url)
 
 

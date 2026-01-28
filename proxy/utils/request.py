@@ -2,6 +2,7 @@
 # pyright: reportUnknownMemberType=false, reportUnknownVariableType=false, reportArgumentType=information
 from __future__ import annotations
 
+import atexit
 import html
 import json
 import re
@@ -10,20 +11,16 @@ from collections import OrderedDict
 from copy import deepcopy
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from urllib.parse import urlparse
 
 from cloudscraper import exceptions as cs_exceptions
 from cloudscraper.interpreters import JavaScriptInterpreter
 from cloudscraper.user_agent import User_Agent
-from curl_cffi.requests import AsyncSession, Response
-from requests.utils import cookiejar_from_dict
+from httpx import AsyncClient, Response
 
 from ..config import Config
 from ..singleton import Singleton
-
-if TYPE_CHECKING:
-    from curl_cffi.requests.session import HttpMethod
 
 __all__ = ("Requests",)
 
@@ -238,15 +235,14 @@ class CloudflareCompat:
                     return obj[name]
 
             cloudflare_kwargs = deepcopy(kwargs)
-            cloudflare_kwargs["allow_redirects"] = False
+            cloudflare_kwargs["follow_redirects"] = False
             cloudflare_kwargs["data"] = updateAttr(cloudflare_kwargs, "data", submit_url["data"])
 
-            parsed_resp_url = urlparse(resp.url)
             cloudflare_kwargs["headers"] = updateAttr(
                 cloudflare_kwargs,
                 "headers",
                 {
-                    "Origin": f"{parsed_resp_url.scheme}://{parsed_resp_url.netloc}",
+                    "Origin": f"{resp.url.scheme}://{resp.url.netloc}",
                     "Referer": str(resp.url),
                 },
             )
@@ -273,18 +269,19 @@ class CloudflareCompat:
 
                 location_header = challengeSubmitResponse.headers["Location"]
                 if not urlparse(location_header).netloc:
-                    parsed_submit_url = urlparse(challengeSubmitResponse.url)
-                    redirect_location = f"{parsed_submit_url.scheme}://{parsed_submit_url.netloc}{location_header}"
+                    redirect_location = (
+                        f"{challengeSubmitResponse.url.scheme}://{challengeSubmitResponse.url.netloc}{location_header}"
+                    )
                 else:
                     redirect_location = location_header
 
                 if redirect_location:
-                    return await self.cloudscraper.request(resp.request.method, redirect_location, **cloudflare_kwargs)  # type: ignore
+                    return await self.cloudscraper.request(resp.request.method, redirect_location, **cloudflare_kwargs)
 
-        return await self.cloudscraper.request(resp.request.method, resp.url, **kwargs)  # type: ignore
+        return await self.cloudscraper.request(resp.request.method, resp.url, **kwargs)
 
 
-class HttpXScraper(AsyncSession[Response]):
+class HttpXScraper(AsyncClient):
     def __init__(
         self,
         *args: Any,
@@ -307,8 +304,7 @@ class HttpXScraper(AsyncSession[Response]):
         self._solveDepthCnt = 0
         self.solveDepth = kwargs.pop("solveDepth", 3)
 
-        impersonate = kwargs.pop("impersonate", "chrome110")
-        super().__init__(*args, impersonate=impersonate, **kwargs)
+        super().__init__(*args, **kwargs)
 
         if hasattr(self, "headers") and self.user_agent.headers:  # type: ignore
             self.headers.update(dict(self.user_agent.headers))  # type: ignore
@@ -318,11 +314,11 @@ class HttpXScraper(AsyncSession[Response]):
         sys.tracebacklimit = 0
         raise exception(msg)
 
-    async def perform_request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
+    async def perform_request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Response:
         response = await super().request(method, url, *args, **kwargs)
         return response
 
-    async def request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
+    async def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Response:
         response = await self.perform_request(method, url, *args, **kwargs)
 
         cloudflare_challenge = CloudflareCompat(self)
@@ -351,18 +347,44 @@ class Requests(Singleton, HttpXScraper):
                 # "browser": "firefox",
                 # "platform": "windows",
                 # "mobile": False,
-                "custom": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
+                "custom": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
             },
             proxy=Config.proxy,
             delay=10,
             debug=False,
             interpreter="js2py",
         )
-        cookies_path = Path(Config.cache_path) / "cookies.json"
-        if cookies_path.exists():
-            with cookies_path.open("r", encoding="utf-8") as f:
-                cookies_dict = json.load(f)
-            cookiejar_from_dict(cookies_dict, cookiejar=self.cookies, overwrite=True)
+        self.cookies_path = Path(Config.cache_path) / "cookies.json"
+        self.load_cookies()
+        atexit.register(self.dump_cookies)
+
+    def load_cookies(self) -> None:
+        if self.cookies_path.exists():
+            with self.cookies_path.open("r", encoding="utf-8") as f:
+                cookies_dict: dict[str, dict[str, dict[str, str | None]]] = json.load(f)
+
+            for domain, domain_cookies in cookies_dict.items():
+                for name, cookie_info in domain_cookies.items():
+                    self.cookies.set(
+                        name,
+                        cookie_info["value"] or "",
+                        domain=domain,
+                        path=cookie_info.get("path", "/") or "/",
+                    )
+
+    def dump_cookies(self) -> None:
+        cookies_dict: dict[str, Any] = {}
+        for cookie in self.cookies.jar:
+            if cookie.domain not in cookies_dict:
+                cookies_dict[cookie.domain] = {}
+            cookies_dict[cookie.domain][cookie.name] = {
+                "value": cookie.value,
+                "path": cookie.path,
+            }
+
+        if not self.cookies_path.parent.exists():
+            self.cookies_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cookies_path.write_text(json.dumps(cookies_dict), encoding="utf-8")
 
     def _clean_headers(self, url: str, headers: dict[str, Any]) -> None:
         """Remove headers that may cause issues with proxying."""
@@ -393,7 +415,7 @@ class Requests(Singleton, HttpXScraper):
                         path=parsed_url.path,
                     )
 
-    async def request(self, method: HttpMethod, url: str, *args: Any, **kwargs: Any) -> Response:
+    async def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> Response:
         if (headers := kwargs.get("headers")) and isinstance(headers, dict):
             self._clean_headers(url, headers)  # type: ignore
 

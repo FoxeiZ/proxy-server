@@ -7,7 +7,7 @@ from asyncio import Semaphore
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .enums import DownloadStatus, FileStatus
 from .singleton import Singleton
@@ -184,7 +184,7 @@ class DownloadPool(Singleton):
         for idx_server in range(1, 10):
             formatted_url = url.format(idx_server=idx_server)
             try:
-                async with self._requester.stream("GET", formatted_url, timeout=30, allow_redirects=True) as response:
+                async with self._requester.stream("GET", formatted_url, timeout=30) as response:
                     if response.status_code != 200:
                         logger.warning(
                             "failed to download image from %s: %s",
@@ -193,8 +193,8 @@ class DownloadPool(Singleton):
                         )
                         continue
 
-                    async for chunk in response.aiter_content(chunk_size=8192):  # type: ignore
-                        await asyncio.to_thread(path.write_bytes, cast("bytes", chunk))
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        await asyncio.to_thread(path.write_bytes, chunk)
 
                     logger.debug("successfully downloaded: %s", formatted_url)
                     await self._on_download_image_complete(gallery_id)
