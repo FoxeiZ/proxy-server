@@ -144,8 +144,10 @@ class ModifyRule(Singleton):
                             await result
                     except Exception as e:
                         logger.exception("error applying rule %s: %s", pattern, e)
+                        raise e
         except Exception as e:
             logger.error("error modifying HTML content: %s", e)
+            raise e
         return str(soup)
 
     def modify_js(self, page_url: str, html_content: str) -> str:
