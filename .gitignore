@@ -2,6 +2,8 @@
 *.db
 *tmp*
 test*
+*.bak
+*.backup
 tasks/
 __pycache__/
 venv/
@@ -12,3 +14,4 @@ galleries/
 !README.md
 
 .env*
+typings/
