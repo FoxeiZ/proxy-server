@@ -3,3 +3,4 @@ beautifulsoup4==4.14.3
 cloudscraper==1.2.71
 httpx[socks]==0.28.1
 python-dotenv
+werkzeug>=3.1.4 # not directly required, pinned by Snyk to avoid a vulnerability
